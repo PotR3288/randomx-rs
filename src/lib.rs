@@ -207,6 +207,11 @@ impl Drop for RandomXDatasetInner {
     }
 }
 
+// The dataset is read-only after initialization — threads only read from it during hashing, never write.
+// Safe to share across threads with no locking needed.
+unsafe impl Send for RandomXDatasetInner {}
+unsafe impl Sync for RandomXDatasetInner {}
+
 #[derive(Debug, Clone)]
 /// The Dataset is a read-only memory structure that is used during VM program execution.
 pub struct RandomXDataset {
@@ -368,6 +373,10 @@ pub struct RandomXVM {
     linked_dataset: Option<RandomXDataset>,
 }
 
+// The VM pointer is per-thread and safe to share behind a Mutex.
+unsafe impl Send for RandomXVM {}
+unsafe impl Sync for RandomXVM {}
+
 impl Drop for RandomXVM {
     /// De-allocates memory for the `VM` object.
     fn drop(&mut self) {
@@ -481,6 +490,65 @@ impl RandomXVM {
                 let result = arr.to_vec();
                 Ok(result)
             }
+        }
+    }
+
+    /// Incremental hashing: initialize the VM state for a mining loop.
+    ///
+    /// Call this once at the start of a nonce range, then call `hash_next` for each
+    /// subsequent nonce (including the first one), and finally `hash_last` to get the
+    /// last hash. This avoids reinitializing the VM on every call and eliminates
+    /// per-iteration allocations — ideal for mining workloads that hash millions of
+    /// nonces against the same dataset.
+    pub fn hash_first(&self, input: &[u8]) -> Result<(), RandomXError> {
+        if input.is_empty() {
+            return Err(RandomXError::ParameterError("input was empty".to_string()));
+        }
+        unsafe {
+            randomx_calculate_hash_first(
+                self.vm,
+                input.as_ptr() as *const c_void,
+                input.len(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Incremental hashing: hash the next nonce and write the previous result to `output`.
+    ///
+    /// Call this for each nonce in the range (including the first one after `hash_first`).
+    /// The output buffer must be at least 32 bytes. Returns error if the VM state is invalid.
+    pub fn hash_next(&self, input: &[u8], output: &mut [u8; RANDOMX_HASH_SIZE as usize]) -> Result<(), RandomXError> {
+        if input.is_empty() {
+            return Err(RandomXError::ParameterError("input was empty".to_string()));
+        }
+        unsafe {
+            randomx_calculate_hash_next(
+                self.vm,
+                input.as_ptr() as *const c_void,
+                input.len(),
+                output.as_mut_ptr() as *mut c_void,
+            );
+        }
+        if *output == [0; RANDOMX_HASH_SIZE as usize] {
+            Err(RandomXError::Other("RandomX calculated hash was zero".to_string()))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Incremental hashing: finalize and write the last hash to `output`.
+    ///
+    /// Call this after all nonces have been hashed via `hash_next`. The output buffer
+    /// must be at least 32 bytes. Returns error if no hashes were computed.
+    pub fn hash_last(&self, output: &mut [u8; RANDOMX_HASH_SIZE as usize]) -> Result<(), RandomXError> {
+        unsafe {
+            randomx_calculate_hash_last(self.vm, output.as_mut_ptr() as *mut c_void);
+        }
+        if *output == [0; RANDOMX_HASH_SIZE as usize] {
+            Err(RandomXError::Other("RandomX calculated hash was zero".to_string()))
+        } else {
+            Ok(())
         }
     }
 

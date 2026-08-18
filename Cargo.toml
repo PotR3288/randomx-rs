@@ -28,4 +28,6 @@ quickcheck = "1"
 cmake = "0.1"
 
 [profile.release]
-lto = false
+lto = "fat"
+opt-level = 3
+codegen-units = 1
