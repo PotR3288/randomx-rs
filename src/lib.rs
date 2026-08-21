@@ -38,7 +38,7 @@ mod bindings;
 /// Test utilities for fuzzing
 pub mod test_utils;
 
-use std::{convert::TryFrom, num::TryFromIntError, ptr, sync::Arc};
+use std::{convert::TryFrom, num::TryFromIntError, ptr, sync::{Arc, Mutex}};
 
 use bindings::{
     randomx_alloc_cache,
@@ -194,8 +194,12 @@ impl RandomXCache {
 struct RandomXDatasetInner {
     dataset_ptr: *mut randomx_dataset,
     dataset_count: u32,
+    /// The cache the dataset was last (re)initialized from. Kept alive for the
+    /// dataset's lifetime; swapped by `reinit_with_cache` on seed change.
+    /// Guarded so the swap is atomic across threads; the lock is held only
+    /// briefly (clone or swap), never across a dataset-init FFI call.
     #[allow(dead_code)]
-    cache: RandomXCache,
+    cache: Mutex<RandomXCache>,
 }
 
 impl Drop for RandomXDatasetInner {
@@ -243,68 +247,91 @@ impl RandomXDataset {
     /// The only legitimate use of a non-zero `start` in the upstream API is splitting the initialization of a single
     /// *shared* dataset across several threads, each initializing a different item range. This wrapper cannot express
     /// that, because `new` always allocates its own dataset, so there is no correct value other than 0.
+    ///
+    /// This fork *can* express it: [`RandomXDataset::new_uninitialized`] plus
+    /// [`RandomXDataset::init_range`] initialize disjoint ranges of one shared dataset from multiple threads.
     // Conversions may be lossy on Windows or Linux
     #[allow(clippy::useless_conversion)]
     pub fn new(flags: RandomXFlag, cache: RandomXCache, start: u32) -> Result<RandomXDataset, RandomXError> {
+        let dataset = Self::new_uninitialized(flags, cache)?;
+        let item_count = dataset.inner.dataset_count;
+        if start >= item_count {
+            return Err(RandomXError::CreationError(format!(
+                "start must be less than item_count: start: {start}, item_count: {item_count}",
+            )));
+        }
+        dataset.init_range(start, item_count - start)?;
+        Ok(dataset)
+    }
+
+    /// Creates a new dataset object and allocates its memory buffer without
+    /// initializing any items.
+    ///
+    /// Initialize the item ranges afterwards with [`RandomXDataset::init_range`]
+    /// — a single call for the whole range, or one call per slice from multiple
+    /// threads (disjoint slices are safe to initialize concurrently, which is
+    /// how xmrig parallelizes dataset generation).
+    ///
+    /// `flags` is one of the following:
+    /// * FLAG_DEFAULT
+    /// * FLAG_LARGE_PAGES
+    ///
+    /// `cache` is a cache object (must be initialized).
+    pub fn new_uninitialized(flags: RandomXFlag, cache: RandomXCache) -> Result<RandomXDataset, RandomXError> {
         let item_count = RandomXDataset::count()
             .map_err(|e| RandomXError::CreationError(format!("Could not get dataset count: {e:?}")))?;
 
-        let test = unsafe { randomx_alloc_dataset(flags.bits) };
-        if test.is_null() {
+        let dataset_ptr = unsafe { randomx_alloc_dataset(flags.bits) };
+        if dataset_ptr.is_null() {
             Err(RandomXError::CreationError("Could not allocate dataset".to_string()))
         } else {
             let inner = RandomXDatasetInner {
-                dataset_ptr: test,
+                dataset_ptr,
                 dataset_count: item_count,
-                cache,
+                cache: Mutex::new(cache),
             };
-            let result = RandomXDataset { inner: Arc::new(inner) };
-
-            if start < item_count {
-                // `randomx_init_dataset` initialises the items `[start, start + count)`, so the count passed to it
-                // must be the number of *remaining* items. Passing the full `item_count` with a non-zero `start`
-                // writes `start` items past the end of the allocation (a heap buffer overflow, silent in release
-                // builds because the library's assertions are compiled out by `NDEBUG`).
-                let remaining = item_count.saturating_sub(start);
-                // `randomx_alloc_dataset` hands back uninitialised memory (only `FLAG_LARGE_PAGES` gets zero pages),
-                // and the call below only writes from `start` onwards, so zero the leading `start` items. Without
-                // this the first `start * RANDOMX_DATASET_ITEM_SIZE` bytes stay uninitialised and reading them in
-                // `get_data` would be undefined behaviour as well as an information leak.
-                if start > 0 {
-                    let memory = unsafe { randomx_get_dataset_memory(result.inner.dataset_ptr) };
-                    if memory.is_null() {
-                        return Err(RandomXError::CreationError(
-                            "Could not get dataset memory to zero the uninitialised prefix".to_string(),
-                        ));
-                    }
-                    let prefix_len = usize::try_from(start)?
-                        .checked_mul(RANDOMX_DATASET_ITEM_SIZE)
-                        .ok_or_else(|| {
-                            RandomXError::CreationError(format!("Dataset prefix size overflows: {start}"))
-                        })?;
-                    // SAFETY: `memory` is the non-null start of the dataset buffer, which the library allocated with
-                    // room for `item_count` items of `RANDOMX_DATASET_ITEM_SIZE` bytes. `start < item_count`, so
-                    // `prefix_len` bytes lie inside that allocation. `u8` is always valid for any bit pattern and has
-                    // an alignment of 1, and nothing else refers to the buffer yet.
-                    unsafe {
-                        ptr::write_bytes(memory.cast::<u8>(), 0, prefix_len);
-                    }
-                }
-                unsafe {
-                    randomx_init_dataset(
-                        result.inner.dataset_ptr,
-                        result.inner.cache.inner.cache_ptr,
-                        c_ulong::from(start),
-                        c_ulong::from(remaining),
-                    );
-                }
-                Ok(result)
-            } else {
-                Err(RandomXError::CreationError(format!(
-                    "start must be less than item_count: start: {start}, item_count: {item_count}",
-                )))
-            }
+            Ok(RandomXDataset { inner: Arc::new(inner) })
         }
+    }
+
+    /// Initializes the item range `[start, start + count)` of the dataset.
+    ///
+    /// The range must lie within `[0, item_count]` (see [`RandomXDataset::count`]).
+    /// Disjoint ranges may be initialized concurrently from multiple threads:
+    /// each 64-byte item is written by exactly one slice and the cache is only
+    /// read during initialization.
+    pub fn init_range(&self, start: u32, count: u32) -> Result<(), RandomXError> {
+        let item_count = self.inner.dataset_count;
+        if start >= item_count || count > item_count - start {
+            return Err(RandomXError::ParameterError(format!(
+                "init_range out of bounds: start: {start}, count: {count}, item_count: {item_count}",
+            )));
+        }
+        if count == 0 {
+            return Ok(());
+        }
+        // Clone the Arc (cheap) and drop the lock before the FFI call so that
+        // concurrent init_range calls on disjoint slices are never serialized.
+        let cache = self.inner.cache.lock().unwrap().clone();
+        unsafe {
+            randomx_init_dataset(
+                self.inner.dataset_ptr,
+                cache.inner.cache_ptr,
+                c_ulong::from(start),
+                c_ulong::from(count),
+            );
+        }
+        Ok(())
+    }
+
+    /// Switches the dataset to a new cache (seed change) so that subsequent
+    /// [`RandomXDataset::init_range`] calls regenerate items from the new
+    /// seed. The dataset's memory buffer is NOT reallocated — the caller
+    /// refills it in place, which is what keeps the dataset pointer (and any
+    /// VMs linked to it) stable across seed changes, mirroring xmrig.
+    pub fn reinit_with_cache(&self, new_cache: &RandomXCache) -> Result<(), RandomXError> {
+        *self.inner.cache.lock().unwrap() = new_cache.clone();
+        Ok(())
     }
 
     /// Returns the number of items in the `dataset` or an error on failure.
@@ -427,6 +454,13 @@ impl RandomXVM {
                     .map(|data| data.inner.dataset_ptr)
                     .unwrap_or_else(ptr::null_mut);
                 let vm = unsafe { randomx_create_vm(flags.bits, cache_ptr, dataset_ptr) };
+                if vm.is_null() {
+                    // The C layer returns null when the VM (or its JIT code
+                    // buffer) cannot be allocated — e.g. OOM or a denied RWX
+                    // mmap. Surfacing this as an error instead of wrapping a
+                    // null pointer avoids a segfault on the first hash.
+                    return Err(RandomXError::CreationError("Could not allocate VM".to_string()));
+                }
                 Ok(RandomXVM {
                     vm,
                     flags,
@@ -624,7 +658,7 @@ impl RandomXVM {
 
 #[cfg(test)]
 mod tests {
-    use std::{convert::TryFrom, ptr, sync::Arc};
+    use std::{convert::TryFrom, ptr, sync::{Arc, Mutex}};
 
     use crate::{
         bindings::randomx_get_dataset_memory,
@@ -752,7 +786,7 @@ mod tests {
                 inner: Arc::new(RandomXDatasetInner {
                     dataset_ptr: ptr::null_mut(),
                     dataset_count: 0,
-                    cache,
+                    cache: Mutex::new(cache),
                 }),
             };
             assert!(vm.reinit_dataset(dataset.clone()).is_err());
@@ -935,6 +969,62 @@ mod tests {
         let vm = RandomXVM::new(flags, None, Some(dataset)).unwrap();
 
         for (input, expected) in vectors {
+            let hash = vm.calculate_hash(input).unwrap();
+            assert_eq!(hex::decode(expected).unwrap(), hash);
+        }
+    }
+
+    #[test]
+    fn test_vectors_fast_mode_sliced_and_reinit() {
+        // Sliced init (new_uninitialized + init_range, as a miner would call it
+        // from multiple threads) must produce the same dataset as a single pass,
+        // and reinit_with_cache must switch the dataset to a new seed in place.
+        // Test vectors from https://github.com/tevador/RandomX/blob/040f4500a6e79d54d84a668013a94507045e786f/src/tests/tests.cpp#L963-L979
+        let vectors: &[(&[u8], &str)] = &[
+            (
+                b"This is a test".as_slice(),
+                "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f",
+            ),
+            (
+                b"Lorem ipsum dolor sit amet".as_slice(),
+                "300a0adb47603dedb42228ccb2b211104f4da45af709cd7547cd049e9489c969",
+            ),
+            (
+                b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua".as_slice(),
+                "c36d4ed4191e617309867ed66a443be4075014e2b061bcdaf9ce7b721d2b77a8",
+            ),
+        ];
+        // The only upstream known-answer vector for key "test key 001"
+        // (listed for both fast and light mode in the RandomX test suite).
+        let reinit_vectors: &[(&[u8], &str)] = &[
+            (
+                b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua".as_slice(),
+                "e9ff4503201c0c2cca26d285c93ae883f9b1d30c9eb240b820756f2d5a7905fc",
+            ),
+        ];
+
+        let flags = RandomXFlag::get_recommended_flags() | RandomXFlag::FLAG_FULL_MEM;
+
+        // Build the dataset in two disjoint slices (split point at 1/4).
+        let cache = RandomXCache::new(flags, b"test key 000").unwrap();
+        let dataset = RandomXDataset::new_uninitialized(flags, cache).unwrap();
+        let item_count = RandomXDataset::count().unwrap();
+        let split = item_count / 4;
+        dataset.init_range(0, split).unwrap();
+        dataset.init_range(split, item_count - split).unwrap();
+
+        let vm = RandomXVM::new(flags, None, Some(dataset.clone())).unwrap();
+        for (input, expected) in vectors {
+            let hash = vm.calculate_hash(input).unwrap();
+            assert_eq!(hex::decode(expected).unwrap(), hash);
+        }
+
+        // Reinit the SAME dataset object (and its buffer) with a new cache/seed.
+        let cache2 = RandomXCache::new(flags, b"test key 001").unwrap();
+        dataset.reinit_with_cache(&cache2).unwrap();
+        dataset.init_range(0, item_count).unwrap();
+
+        for (input, expected) in reinit_vectors {
             let hash = vm.calculate_hash(input).unwrap();
             assert_eq!(hex::decode(expected).unwrap(), hash);
         }
