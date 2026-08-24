@@ -356,7 +356,8 @@ impl RandomXDataset {
     /// reported as a [`RandomXError`] instead of aborting the process.
     ///
     /// If the dataset was created with a non-zero `start`, the first `start` items were never initialised by the
-    /// RandomX library; [`RandomXDataset::new`] zeroes them, so they are returned here as zero bytes.
+    /// RandomX library; cover `[0, start)` with [`RandomXDataset::init_range`] before using or reading the dataset,
+    /// otherwise those bytes are undefined.
     pub fn get_data(&self) -> Result<Vec<u8>, RandomXError> {
         let memory = unsafe { randomx_get_dataset_memory(self.inner.dataset_ptr) };
         if memory.is_null() {
@@ -372,8 +373,9 @@ impl RandomXDataset {
         // SAFETY: `memory` is a non-null pointer to the dataset buffer owned by the RandomX library. The library
         // allocated that buffer with room for `randomx_dataset_item_count()` items of `RANDOMX_DATASET_ITEM_SIZE`
         // bytes each, and `dataset_count` was set from that same call, so exactly `size_in_bytes` bytes are inside
-        // the allocation. Every one of those bytes is initialised: `RandomXDataset::new` has the library write the
-        // items `[start, count)` and zeroes the `[0, start)` prefix that the library leaves untouched. `u8` has an
+        // the allocation. Every one of those bytes is initialised provided the dataset was fully initialised —
+        // either by [`RandomXDataset::new`] (which has the library write the items `[start, count)`, so pass 0)
+        // or by covering all of `[0, count)` with [`RandomXDataset::init_range`]. `u8` has an
         // alignment of 1, so the pointer is trivially aligned. The buffer outlives the slice: `&self` keeps the
         // `Arc<RandomXDatasetInner>` (and hence the dataset allocation) alive, the dataset is read-only once
         // initialised, and the slice is copied into an owned `Vec` before this function returns.
@@ -388,6 +390,52 @@ impl RandomXDataset {
         })?;
         result.extend_from_slice(data);
         Ok(result)
+    }
+
+    /// Returns a raw pointer to the internal memory buffer of the `dataset`.
+    ///
+    /// The buffer is [`RandomXDataset::memory_size`] bytes long and stays valid
+    /// for as long as this dataset (or any clone sharing its `Arc`) is alive.
+    /// Treat the contents as opaque — the layout is RandomX-internal.
+    pub fn raw_memory(&self) -> *mut u8 {
+        unsafe { randomx_get_dataset_memory(self.inner.dataset_ptr) as *mut u8 }
+    }
+
+    /// Returns the byte size of the internal memory buffer
+    /// (`item_count * RANDOMX_DATASET_ITEM_SIZE` — the full dataset size,
+    /// 2080 MiB with the Tari RandomX configuration).
+    pub fn memory_size(&self) -> usize {
+        self.inner.dataset_count as usize * 64
+    }
+
+    /// Copies the entire internal memory buffer from another dataset into this one.
+    ///
+    /// Both datasets must hold the same item count (fixed by the RandomX
+    /// configuration, so this holds for any two datasets of the same build) and
+    /// the source must already be fully initialized. The buffer pointer of the
+    /// destination is unchanged — only its contents are replaced — so VMs linked
+    /// to it keep pointing at valid memory. This is the same scheme xmrig uses
+    /// to fill per-NUMA-node dataset replicas (`RxDataset::setRaw`).
+    pub fn copy_from(&self, src: &RandomXDataset) -> Result<(), RandomXError> {
+        if self.inner.dataset_count != src.inner.dataset_count {
+            return Err(RandomXError::ParameterError(format!(
+                "copy_from: item count mismatch: {} != {}",
+                self.inner.dataset_count, src.inner.dataset_count,
+            )));
+        }
+        let size = self.memory_size();
+        if size == 0 {
+            return Err(RandomXError::ParameterError("copy_from: empty dataset".to_string()));
+        }
+        let dst = self.raw_memory();
+        let source = src.raw_memory();
+        if dst.is_null() || source.is_null() {
+            return Err(RandomXError::Other("copy_from: null dataset memory".to_string()));
+        }
+        unsafe {
+            libc::memcpy(dst as *mut c_void, source as *const c_void, size);
+        }
+        Ok(())
     }
 }
 
@@ -769,6 +817,47 @@ mod tests {
         assert!(RandomXDataset::new(flags, cache.clone(), item_count).is_err());
 
         drop(dataset);
+        drop(cache);
+    }
+
+    #[test]
+    fn lib_dataset_copy_from() {
+        let flags = RandomXFlag::default();
+        let key = "Key";
+        let cache = RandomXCache::new(flags, key.as_bytes()).unwrap();
+        // Uninitialized buffers are enough — copy_from only moves raw bytes.
+        let src = RandomXDataset::new_uninitialized(flags, cache.clone()).unwrap();
+        let dst = RandomXDataset::new_uninitialized(flags, cache.clone()).unwrap();
+
+        // memory_size must agree with the C-level item count * 64 bytes.
+        let item_count = RandomXDataset::count().unwrap() as usize;
+        assert_eq!(src.memory_size(), item_count * 64);
+        assert!(src.memory_size() > 0);
+
+        // Write a recognizable pattern into the source's raw buffer, copy it
+        // across, and verify it transferred byte-exact.
+        let size = src.memory_size();
+        unsafe {
+            for off in (0..size).step_by(64) {
+                *src.raw_memory().add(off) = 0xAB;
+            }
+            *src.raw_memory().add(size - 1) = 0xCD;
+        }
+        dst.copy_from(&src).unwrap();
+        unsafe {
+            for off in (0..size).step_by(64) {
+                assert_eq!(*dst.raw_memory().add(off), 0xAB);
+            }
+            assert_eq!(*dst.raw_memory().add(size - 1), 0xCD);
+        }
+
+        // Clones share one underlying buffer (Arc) — copy_from between a
+        // dataset and its own clone must succeed as a no-op.
+        let clone = dst.clone();
+        dst.copy_from(&clone).unwrap();
+
+        drop(src);
+        drop(dst);
         drop(cache);
     }
 
