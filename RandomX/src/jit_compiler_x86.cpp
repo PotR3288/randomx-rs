@@ -301,16 +301,27 @@ namespace randomx {
 		memcpy(code, codeDatasetInit, datasetInitSize);
 	}
 
-	void JitCompilerX86::generateProgramPrologue(Program& prog, ProgramConfiguration& pcfg) {
-		instructionOffsets.clear();
-		for (unsigned i = 0; i < RegistersCount; ++i) {
-			registerUsage[i] = -1;
-		}
+#ifdef RANDOMX_SPREFETCH_EARLY
+	// A/B experiment (RANDOMX_SPREFETCH_EARLY): raw opcode bytes dispatch through the
+	// weighted engine[] table — slots 0..255 partitioned in enum order by
+	// RANDOMX_FREQ_* weights (total = 256, no NOP slots). Mirror that layout to map
+	// each byte to its true InstructionType for pre-scan classification.
+	static const uint8_t* spOpcodeMap() {
+		static uint8_t m[256];
+		int slot = 0;
+#define SP_MAP(x) for (int k = 0; k < RANDOMX_FREQ_##x; ++k) m[slot++] = (uint8_t)(InstructionType::x);
+		SP_MAP(IADD_RS) SP_MAP(IADD_M) SP_MAP(ISUB_R) SP_MAP(ISUB_M) SP_MAP(IMUL_R) SP_MAP(IMUL_M)
+		SP_MAP(IMULH_R) SP_MAP(IMULH_M) SP_MAP(ISMULH_R) SP_MAP(ISMULH_M) SP_MAP(IMUL_RCP)
+		SP_MAP(INEG_R) SP_MAP(IXOR_R) SP_MAP(IXOR_M) SP_MAP(IROR_R) SP_MAP(IROL_R) SP_MAP(ISWAP_R)
+		SP_MAP(FSWAP_R) SP_MAP(FADD_R) SP_MAP(FADD_M) SP_MAP(FSUB_R) SP_MAP(FSUB_M) SP_MAP(FSCAL_R)
+		SP_MAP(FMUL_R) SP_MAP(FDIV_M) SP_MAP(FSQRT_R) SP_MAP(CBRANCH) SP_MAP(CFROUND) SP_MAP(ISTORE)
+		SP_MAP(NOP)
+#undef SP_MAP
+		return m;
+	}
+#endif
 
-		codePos = prologueSize;
-		memcpy(code + codePos - 48, &pcfg.eMask, sizeof(pcfg.eMask));
-		memcpy(code + codePos, codeLoopLoad, loopLoadSize);
-		codePos += loopLoadSize;
+	void JitCompilerX86::generateProgramPrologue(Program& prog, ProgramConfiguration& pcfg) {
 #ifdef RANDOMX_SPREFETCH_EARLY
 		// A/B experiment: also emit the scratchpad prefetch for iteration N+1 as early
 		// as possible — right after the last body instruction that writes to either
@@ -320,23 +331,42 @@ namespace randomx {
 		// hash output stays bit-identical to baseline. CBRANCH targets always resolve
 		// to already-emitted positions (registerUsage is past-only), so inserting here
 		// cannot shift a jump target; rax/rdx are temporaries at this point in the loop.
+		const uint8_t* opMap = spOpcodeMap();
 		int spEarlyIdx = -1;
 		for (unsigned i = 0; i < prog.getSize(); ++i) {
 			const Instruction& instr = prog(i);
 			uint32_t dst = instr.dst % RegistersCount;
 			bool writesAddrReg = false;
-			if ((InstructionType)instr.opcode <= InstructionType::ISWAP_R) { // integer ops write state[dst]
+			switch ((InstructionType)opMap[instr.opcode]) {
+			case InstructionType::ISWAP_R: // swaps state[dst] and state[src]
 				writesAddrReg = (dst == pcfg.readReg0 || dst == pcfg.readReg1);
-				if ((InstructionType)instr.opcode == InstructionType::ISWAP_R) { // also swaps state[src]
+				{
 					uint32_t src = instr.src % RegistersCount;
 					writesAddrReg |= (src == pcfg.readReg0 || src == pcfg.readReg1);
 				}
-			} else if ((InstructionType)instr.opcode == InstructionType::CBRANCH) { // add imm to state[dst]
+				break;
+			case InstructionType::CBRANCH: // conditionally adds imm to state[dst]
 				writesAddrReg = (dst == pcfg.readReg0 || dst == pcfg.readReg1);
+				break;
+			default:
+				if ((InstructionType)opMap[instr.opcode] <= InstructionType::ISWAP_R) { // integer ops write state[dst]
+					writesAddrReg = (dst == pcfg.readReg0 || dst == pcfg.readReg1);
+				}
+				break;
 			}
 			if (writesAddrReg) spEarlyIdx = i;
 		}
+		if (getenv("RX_DEBUG_EARLY")) fprintf(stderr, "early-prefetch idx=%d of %zu (r0=%u r1=%u)\n", spEarlyIdx, prog.getSize(), pcfg.readReg0, pcfg.readReg1);
 #endif
+		instructionOffsets.clear();
+		for (unsigned i = 0; i < RegistersCount; ++i) {
+			registerUsage[i] = -1;
+		}
+
+		codePos = prologueSize;
+		memcpy(code + codePos - 48, &pcfg.eMask, sizeof(pcfg.eMask));
+		memcpy(code + codePos, codeLoopLoad, loopLoadSize);
+		codePos += loopLoadSize;
 		for (unsigned i = 0; i < prog.getSize(); ++i) {
 			Instruction& instr = prog(i);
 			instr.src %= RegistersCount;
