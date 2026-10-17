@@ -50,10 +50,16 @@ fn main() {
     // A/B experiment knobs — all default to current production behavior (inert unless set):
     //   RANDOMX_DATASET_PREFETCH = nta | t2 | t1  (dataset read-ahead prefetch hint class)
     //   RANDOMX_NT_STORE_L3      = 0 | 1          (non-temporal stores for L3-region ISTOREs)
+    //   RANDOMX_SPREFETCH_EARLY  = 0 | 1          (emit the scratchpad-prefetch block mid-body,
+    //                                              right after the last write to either address
+    //                                              register, instead of only in the epilogue —
+    //                                              more lead time for the next iteration's loads)
     let prefetch = env::var("RANDOMX_DATASET_PREFETCH").unwrap_or_else(|_| "nta".to_string());
     println!("cargo:rerun-if-env-changed=RANDOMX_DATASET_PREFETCH");
     let nt_store_l3 = env::var("RANDOMX_NT_STORE_L3").unwrap_or_else(|_| "0".to_string());
     println!("cargo:rerun-if-env-changed=RANDOMX_NT_STORE_L3");
+    let sprefetch_early = env::var("RANDOMX_SPREFETCH_EARLY").unwrap_or_else(|_| "0".to_string());
+    println!("cargo:rerun-if-env-changed=RANDOMX_SPREFETCH_EARLY");
 
     // Extra defines for the C/C++ build. Applied to both CFLAGS and CXXFLAGS so they also
     // reach jit_compiler_x86_static.S, which is compiled as a C-language source (the cmake
@@ -70,6 +76,11 @@ fn main() {
         "0" | "" => {}
         "1" => extra_flags.push_str(" -DRANDOMX_NT_STORE_L3"),
         other => panic!("RANDOMX_NT_STORE_L3 must be 0|1, got {other}"),
+    }
+    match sprefetch_early.as_str() {
+        "0" | "" => {}
+        "1" => extra_flags.push_str(" -DRANDOMX_SPREFETCH_EARLY"),
+        other => panic!("RANDOMX_SPREFETCH_EARLY must be 0|1, got {other}"),
     }
 
     // Build the RandomX C++ library. We pass -flto=thin via environment variables
