@@ -36,18 +36,56 @@ fn main() {
         Err(_) => false,
     };
 
+    // ARCH (CMake variable): controls -march for helper code (AES/Argon2 init paths).
+    // NOTE: this must be "ARCH", not "DARCH" — an earlier version passed DARCH, which CMake
+    // silently ignored, so every cargo build actually took the portable branch below. That
+    // turned out to be exactly what we want for shipping (no AVX/AVX-512 in helpers), so the
+    // default stays "unset" = current production behavior: -maes plus per-file SSSE3/AVX2 for
+    // the Argon2 init variants only. Set RANDOMX_ARCH=native explicitly if a local build wants
+    // the build machine's full ISA in helper code (per-hash rate is unaffected either way —
+    // the VM program itself is scalar SSE2 emitted by the JIT at runtime).
+    let arch = env::var("RANDOMX_ARCH").unwrap_or_default();
+    println!("cargo:rerun-if-env-changed=RANDOMX_ARCH");
+
+    // A/B experiment knobs — all default to current production behavior (inert unless set):
+    //   RANDOMX_DATASET_PREFETCH = nta | t2 | t1  (dataset read-ahead prefetch hint class)
+    //   RANDOMX_NT_STORE_L3      = 0 | 1          (non-temporal stores for L3-region ISTOREs)
+    let prefetch = env::var("RANDOMX_DATASET_PREFETCH").unwrap_or_else(|_| "nta".to_string());
+    println!("cargo:rerun-if-env-changed=RANDOMX_DATASET_PREFETCH");
+    let nt_store_l3 = env::var("RANDOMX_NT_STORE_L3").unwrap_or_else(|_| "0".to_string());
+    println!("cargo:rerun-if-env-changed=RANDOMX_NT_STORE_L3");
+
+    // Extra defines for the C/C++ build. Applied to both CFLAGS and CXXFLAGS so they also
+    // reach jit_compiler_x86_static.S, which is compiled as a C-language source (the cmake
+    // "cheat" in RandomX/CMakeLists.txt). Prefetch hints and store hints never change
+    // register state, so hash output is bit-identical regardless of the selected variant.
+    let mut extra_flags = String::new();
+    match prefetch.as_str() {
+        "nta" => {}
+        "t2" => extra_flags.push_str(" -DRANDOMX_PREFETCH_T2"),
+        "t1" => extra_flags.push_str(" -DRANDOMX_PREFETCH_T1"),
+        other => panic!("RANDOMX_DATASET_PREFETCH must be nta|t2|t1, got {other}"),
+    }
+    match nt_store_l3.as_str() {
+        "0" | "" => {}
+        "1" => extra_flags.push_str(" -DRANDOMX_NT_STORE_L3"),
+        other => panic!("RANDOMX_NT_STORE_L3 must be 0|1, got {other}"),
+    }
+
     // Build the RandomX C++ library. We pass -flto=thin via environment variables
     // because cmake's CMAKE_INTERPROCEDURAL_OPTIMIZATION is unreliable across toolchains
     // and often silently falls back to non-LTO compilation.
     let randomx_path = if is_optimized {
         let mut config = Config::new(&randomx_dir);
-        config.define("DARCH", "native");
+        if !arch.is_empty() {
+            config.define("ARCH", &arch);
+        }
 
         // Use -flto=thin via compiler flags — works with GCC, Clang, and AppleClang.
         // ThinLTO gives ~80-90% of full LTO speedup at a fraction of compile time.
-        let lto_flags = "-flto=thin";
-        config.env("CFLAGS", lto_flags)
-              .env("CXXFLAGS", lto_flags);
+        let lto_flags = format!("-flto=thin{extra_flags}");
+        config.env("CFLAGS", &lto_flags)
+              .env("CXXFLAGS", &lto_flags);
 
         // Also try cmake IPO as a secondary mechanism (works on some toolchains).
         config.define("CMAKE_INTERPROCEDURAL_OPTIMIZATION", "ON");
@@ -59,9 +97,14 @@ fn main() {
 
         path
     } else {
-        Config::new(&randomx_dir)
-            .define("DARCH", "native")
-            .build()
+        let mut config = Config::new(&randomx_dir);
+        if !arch.is_empty() {
+            config.define("ARCH", &arch);
+        }
+        if !extra_flags.is_empty() {
+            config = config.env("CFLAGS", extra_flags.trim()).env("CXXFLAGS", extra_flags.trim());
+        }
+        config.build()
     };
 
     println!("cargo:rustc-link-search=native={}/lib64", randomx_path.display());
