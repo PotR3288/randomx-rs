@@ -311,46 +311,11 @@ namespace randomx {
 		memcpy(code + codePos - 48, &pcfg.eMask, sizeof(pcfg.eMask));
 		memcpy(code + codePos, codeLoopLoad, loopLoadSize);
 		codePos += loopLoadSize;
-#ifdef RANDOMX_SPREFETCH_EARLY
-		// A/B experiment: also emit the scratchpad prefetch for iteration N+1 as early
-		// as possible — right after the last body instruction that writes to either
-		// address register, since spMix = state[readReg0] ^ state[readReg1] is only
-		// final at that point. The epilogue keeps its own copy because it must leave
-		// rax/rdx masked for loop_load. Prefetch hints never change register state, so
-		// hash output stays bit-identical to baseline. CBRANCH targets always resolve
-		// to already-emitted positions (registerUsage is past-only), so inserting here
-		// cannot shift a jump target; rax/rdx are temporaries at this point in the loop.
-		int spEarlyIdx = -1;
-		for (unsigned i = 0; i < prog.getSize(); ++i) {
-			const Instruction& instr = prog(i);
-			uint32_t dst = instr.dst % RegistersCount;
-			bool writesAddrReg = false;
-			if ((InstructionType)instr.opcode <= InstructionType::ISWAP_R) { // integer ops write state[dst]
-				writesAddrReg = (dst == pcfg.readReg0 || dst == pcfg.readReg1);
-				if ((InstructionType)instr.opcode == InstructionType::ISWAP_R) { // also swaps state[src]
-					uint32_t src = instr.src % RegistersCount;
-					writesAddrReg |= (src == pcfg.readReg0 || src == pcfg.readReg1);
-				}
-			} else if ((InstructionType)instr.opcode == InstructionType::CBRANCH) { // add imm to state[dst]
-				writesAddrReg = (dst == pcfg.readReg0 || dst == pcfg.readReg1);
-			}
-			if (writesAddrReg) spEarlyIdx = i;
-		}
-#endif
 		for (unsigned i = 0; i < prog.getSize(); ++i) {
 			Instruction& instr = prog(i);
 			instr.src %= RegistersCount;
 			instr.dst %= RegistersCount;
 			generateCode(instr, i);
-#ifdef RANDOMX_SPREFETCH_EARLY
-			if ((int)i == spEarlyIdx) {
-				emit(REX_MOV_RR64);
-				emitByte(0xc0 + pcfg.readReg0);
-				emit(REX_XOR_RAX_R64);
-				emitByte(0xc0 + pcfg.readReg1);
-				emit(ADDR(randomx_prefetch_scratchpad), ADDR(randomx_prefetch_scratchpad_end) - ADDR(randomx_prefetch_scratchpad));
-			}
-#endif
 		}
 		emit(REX_MOV_RR);
 		emitByte(0xc0 + pcfg.readReg2);
