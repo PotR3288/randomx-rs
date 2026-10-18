@@ -799,19 +799,6 @@ namespace randomx {
 
 	void JitCompilerX86::h_ISTORE(Instruction& instr, int i) {
 		genAddressRegDst(instr);
-#if defined(RANDOMX_NT_STORE_L3)
-		if (instr.getModCond() >= StoreL3Condition) {
-			// A/B experiment: non-temporal store for the rarely-revisited 2 MiB region.
-			// Same ModRM/SIB addressing as the plain store below (identical target), only
-			// the opcode changes to MOVNTI. x86 TSO keeps NT stores ordered w.r.t. later
-			// same-address loads on this core, so register state and hash output are
-			// bit-identical; the only effect is reduced L1 pollution from 2 MiB-region data.
-			emit(MOVNTI);
-			emitByte(0x04 + 8 * instr.src);
-			emitByte(0x06);
-			return;
-		}
-#endif
 		emit(REX_MOV_MR);
 		emitByte(0x04 + 8 * instr.src);
 		emitByte(0x06);
