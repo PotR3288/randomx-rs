@@ -67,11 +67,15 @@ fn main() {
     println!("cargo:rustc-link-search=native={}/lib64", randomx_path.display());
     println!("cargo:rustc-link-search=native={}/lib", randomx_path.display());
     println!("cargo:rustc-link-lib=static=randomx");
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or("linux".to_string());
-    let dylib_name = match target_os.as_str() {
-        "freebsd" | "macos" | "ios" => "c++", // FreeBSD, macOS and iOS use "c++"
-        "windows" => "msvcrt",                // Use MSVC runtime on Windows
-        _ => "stdc++",                        // Default for other systems (Linux, etc.)
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "linux".to_string());
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    // Windows splits by toolchain: mingw-w64 (windows-gnu) compiles the C++
+    // sources with g++, so they need libstdc++; MSVC/clang-cl use msvcrt.
+    let dylib_name = match (target_os.as_str(), target_env.as_str()) {
+        ("freebsd", _) | ("macos", _) | ("ios", _) => "c++", // FreeBSD, macOS and iOS use "c++"
+        ("windows", "gnu") => "stdc++",                      // mingw-w64: C++ objects need libstdc++
+        ("windows", _) => "msvcrt",                          // MSVC runtime on Windows (MSVC/clang-cl)
+        _ => "stdc++",                                       // Default for other systems (Linux, etc.)
     };
     println!("cargo:rustc-link-lib=dylib={}", dylib_name);
 
