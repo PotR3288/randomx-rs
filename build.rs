@@ -79,7 +79,10 @@ fn main() {
     };
     println!("cargo:rustc-link-lib=dylib={}", dylib_name);
 
-    if cfg!(target_os = "windows") {
+    // cfg!() would test the HOST here (build.rs runs on the build machine);
+    // cross-compiling from Linux to Windows must still link advapi32 for
+    // RandomX's SeLockMemoryPrivilege calls. Use the target env vars instead.
+    if target_os == "windows" {
         println!("cargo:rustc-link-lib=advapi32");
     }
 }
