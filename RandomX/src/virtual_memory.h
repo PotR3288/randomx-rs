@@ -42,7 +42,8 @@ void setPagesRX(void*, size_t);
 void setPagesRWX(void*, size_t);
 void* allocLargePagesMemory(size_t);
 #if defined(_WIN32) || defined(__CYGWIN__)
-void allocLargePagesMemoryEx(size_t, void**, DWORD*);
+/* unsigned long* matches DWORD (typedef of unsigned long on Windows). */
+void allocLargePagesMemoryEx(size_t, void**, unsigned long*);
 #endif
 void freePagedMemory(void*, size_t);
 

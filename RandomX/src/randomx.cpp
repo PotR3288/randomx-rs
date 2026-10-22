@@ -28,9 +28,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "randomx.h"
 #include "dataset.hpp"
-#ifdef _WIN32
-#include <windows.h>
-#endif
+#include "virtual_memory.h"
 #include "vm_interpreted.hpp"
 #include "vm_interpreted_light.hpp"
 #include "vm_compiled.hpp"
@@ -197,11 +195,21 @@ extern "C" {
 			dataset = new randomx_dataset();
 			if (flags & RANDOMX_FLAG_LARGE_PAGES) {
 				dataset->dealloc = &randomx::deallocDataset<randomx::LargePageAllocator>;
-				mem = reinterpret_cast<uint8_t*>(randomx::LargePageAllocator::allocMemory(randomx::DatasetSize));
 #ifdef _WIN32
-				if (mem == nullptr && err_out != nullptr) {
-					*err_out = GetLastError();
+				// Call the C allocator directly: LargePageAllocator::allocMemory throws
+				// bad_alloc on failure, which would skip the error capture below.
+				void *raw = nullptr;
+				unsigned long winErr = 0;
+				allocLargePagesMemoryEx(randomx::DatasetSize, &raw, &winErr);
+				if (raw == nullptr) {
+					if (err_out != nullptr) {
+						*err_out = winErr;
+					}
+				} else {
+					mem = reinterpret_cast<uint8_t*>(raw);
 				}
+#else
+				mem = reinterpret_cast<uint8_t*>(randomx::LargePageAllocator::allocMemory(randomx::DatasetSize));
 #endif
 			} else {
 				dataset->dealloc = &randomx::deallocDataset<randomx::DefaultAllocator>;
