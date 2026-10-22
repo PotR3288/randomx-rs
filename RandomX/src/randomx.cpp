@@ -28,6 +28,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "randomx.h"
 #include "dataset.hpp"
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "vm_interpreted.hpp"
 #include "vm_interpreted_light.hpp"
 #include "vm_compiled.hpp"
