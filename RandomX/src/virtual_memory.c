@@ -29,6 +29,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #if defined(_WIN32) || defined(__CYGWIN__)
 #include <windows.h>
 #else
+#include <stdint.h>
 #define _GNU_SOURCE	1	/* needed for MAP_ANONYMOUS on older platforms */
 #ifdef __APPLE__
 #include <mach/vm_statistics.h>
@@ -202,6 +203,73 @@ void setPagesRWX(void* ptr, size_t bytes) {
 	char *errfunc;
 	pageProtect(ptr, bytes, PAGE_EXECUTE_READWRITE, &errfunc);
 }
+#if defined(_WIN32) || defined(__CYGWIN__)
+/* Extended variant that returns the Win32 error code (or 0 on success). */
+void allocLargePagesMemoryEx(size_t bytes, void** mem_out, DWORD* err_out) {
+	void* mem;
+	char *errfunc;
+	*mem_out = NULL;
+	*err_out = 0;
+	if (setPrivilege("SeLockMemoryPrivilege", 1, &errfunc)) {
+		/* Privilege failure is not a Win32 error — leave err=0. */
+		return;
+	}
+	size_t pageMinimum = GetLargePageMinimum();
+	if (!pageMinimum) {
+		errfunc = "No large pages";
+		return;
+	}
+	mem = VirtualAlloc(NULL, alignSize(bytes, pageMinimum), MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES, PAGE_READWRITE);
+	if (mem == NULL) {
+		*err_out = GetLastError();
+		return;
+	}
+	*mem_out = mem;
+}
+
+void* allocLargePagesMemory(size_t bytes) {
+	void* mem = NULL;
+	DWORD err = 0;
+	allocLargePagesMemoryEx(bytes, &mem, &err);
+	return mem;
+}
+#else
+/* Non-Windows: large-page allocation via mmap(MAP_HUGETLB). */
+void allocLargePagesMemoryEx(size_t bytes, void** mem_out, uint32_t* err_out) {
+	void* mem;
+	*mem_out = NULL;
+	if (err_out) *err_out = 0;
+
+#ifdef __APPLE__
+	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, VM_FLAGS_SUPERPAGE_SIZE_2MB, 0);
+#elif defined(__FreeBSD__)
+	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_ALIGNED_SUPER, -1, 0);
+#elif defined(__OpenBSD__) || defined(__NetBSD__)
+	mem = MAP_FAILED; // OpenBSD does not support huge pages
+#else
+	/* Prefer 1 GB huge pages for large allocations (dataset ~2 GiB): fewer
+	 * TLB entries and one shared mapping instead of ~1024 x 2 MiB pages.
+	 * Falls back to the default (2 MiB) huge page size when 1 GiB pages
+	 * are not reserved, so behavior is unchanged on stock systems.
+	 * MAP_HUGE_1GB requires Linux >= 3.8; some toolchains don't expose it
+	 * via headers even with _GNU_SOURCE, so define it from the UAPI value. */
+#ifndef MAP_HUGE_SHIFT
+#define MAP_HUGE_SHIFT 26
+#endif
+#ifndef MAP_HUGE_1GB
+#define MAP_HUGE_1GB (30 << MAP_HUGE_SHIFT)
+#endif
+#if defined(__linux__)
+	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | (MAP_HUGE_1GB) | MAP_POPULATE, -1, 0);
+	if (mem == MAP_FAILED)
+#endif
+	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0);
+#endif
+	if (mem == MAP_FAILED)
+		mem = NULL;
+	*mem_out = mem;
+}
 
 void* allocLargePagesMemory(size_t bytes) {
 	void* mem;
@@ -247,6 +315,8 @@ void* allocLargePagesMemory(size_t bytes) {
 #endif
 	return mem;
 }
+#endif
+
 
 void freePagedMemory(void* ptr, size_t bytes) {
 #if defined(_WIN32) || defined(__CYGWIN__)

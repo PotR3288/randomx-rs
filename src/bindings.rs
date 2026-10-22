@@ -46,6 +46,8 @@ extern "C" {
     pub fn randomx_init_cache(cache: *mut randomx_cache, key: *const c_void, keySize: usize);
     pub fn randomx_release_cache(cache: *mut randomx_cache);
     pub fn randomx_alloc_dataset(flags: c_uint) -> *mut randomx_dataset;
+    #[cfg(windows)]
+    pub fn randomx_alloc_dataset_ex(flags: c_uint, err_out: *mut c_uint) -> *mut randomx_dataset;
     pub fn randomx_dataset_item_count() -> c_ulong;
     pub fn randomx_init_dataset(
         dataset: *mut randomx_dataset,

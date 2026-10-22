@@ -59,6 +59,8 @@ use bindings::{
     randomx_vm_set_dataset,
     RANDOMX_HASH_SIZE,
 };
+#[cfg(windows)]
+use bindings::randomx_alloc_dataset_ex;
 use bitflags::bitflags;
 use libc::{c_ulong, c_void};
 use thiserror::Error;
@@ -291,6 +293,41 @@ impl RandomXDataset {
                 cache: Mutex::new(cache),
             };
             Ok(RandomXDataset { inner: Arc::new(inner) })
+        }
+    }
+
+#[cfg(windows)]
+    /// Allocate a dataset buffer without initializing its items. Like [`new_uninitialized`], but when
+    /// `FLAG_LARGE_PAGES` is set and allocation fails, returns the Win32 error code (e.g. 1450/1455
+    /// = insufficient physical RAM) in addition to the generic failure — useful for diagnostic logging
+    /// on Windows where huge-page commit failures are often resource-pressure related rather than a
+    /// privilege or configuration problem.
+    ///
+    /// On non-Windows platforms `win32_error` is always set to 0.
+    pub fn new_uninitialized_with_err(
+        flags: RandomXFlag,
+        cache: RandomXCache,
+    ) -> Result<(RandomXDataset, Option<u32>), RandomXError> {
+        let item_count = RandomXDataset::count()
+            .map_err(|e| RandomXError::CreationError(format!("Could not get dataset count: {e:?}")))?;
+
+        let mut win32_err: u32 = 0;
+        let dataset_ptr = unsafe { randomx_alloc_dataset_ex(flags.bits(), &mut win32_err) };
+        if dataset_ptr.is_null() {
+            if win32_err != 0 {
+                Err(RandomXError::CreationError(
+                    format!("Could not allocate dataset (Win32 error: {})", win32_err),
+                ))
+            } else {
+                Err(RandomXError::CreationError("Could not allocate dataset".to_string()))
+            }
+        } else {
+            let inner = RandomXDatasetInner {
+                dataset_ptr,
+                dataset_count: item_count,
+                cache: Mutex::new(cache),
+            };
+            Ok((RandomXDataset { inner: Arc::new(inner) }, if win32_err != 0 { Some(win32_err) } else { None }))
         }
     }
 

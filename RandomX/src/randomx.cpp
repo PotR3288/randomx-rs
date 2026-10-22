@@ -178,6 +178,49 @@ extern "C" {
 		return dataset;
 	}
 
+	/* Extended variant: returns both pointer and Win32 error code on failure.
+	 * On non-Windows platforms, err_out is always set to 0. */
+	RANDOMX_EXPORT randomx_dataset *randomx_alloc_dataset_ex(randomx_flags flags, unsigned long *err_out) {
+		if (err_out) *err_out = 0;
+
+		if (randomx::DatasetSize > std::numeric_limits<size_t>::max()) {
+			return nullptr;
+		}
+
+		randomx_dataset *dataset = nullptr;
+		uint8_t *mem = nullptr;
+
+		try {
+			dataset = new randomx_dataset();
+			if (flags & RANDOMX_FLAG_LARGE_PAGES) {
+				dataset->dealloc = &randomx::deallocDataset<randomx::LargePageAllocator>;
+				mem = reinterpret_cast<uint8_t*>(randomx::LargePageAllocator::allocMemory(randomx::DatasetSize));
+#ifdef _WIN32
+				if (mem == nullptr && err_out != nullptr) {
+					*err_out = GetLastError();
+				}
+#endif
+			} else {
+				dataset->dealloc = &randomx::deallocDataset<randomx::DefaultAllocator>;
+				mem = reinterpret_cast<uint8_t*>(randomx::DefaultAllocator::allocMemory(randomx::DatasetSize));
+			}
+		} catch (std::exception &) {
+			if (dataset != nullptr) {
+				randomx_release_dataset(dataset);
+				dataset = nullptr;
+			}
+		}
+
+		if (dataset && mem == nullptr) {
+			randomx_release_dataset(dataset);
+			dataset = nullptr;
+		} else if (dataset) {
+			dataset->memory = mem;
+		}
+
+		return dataset;
+	}
+
 	constexpr unsigned long DatasetItemCount = randomx::DatasetSize / RANDOMX_DATASET_ITEM_SIZE;
 
 	unsigned long randomx_dataset_item_count() {

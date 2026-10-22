@@ -136,6 +136,7 @@ RANDOMX_EXPORT void randomx_release_cache(randomx_cache* cache);
  *         NULL is returned if memory allocation fails.
  */
 RANDOMX_EXPORT randomx_dataset *randomx_alloc_dataset(randomx_flags flags);
+RANDOMX_EXPORT randomx_dataset *randomx_alloc_dataset_ex(randomx_flags flags, unsigned long *err_out);
 
 /**
  * Gets the number of items contained in the dataset.
