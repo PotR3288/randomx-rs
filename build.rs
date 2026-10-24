@@ -28,6 +28,7 @@ use cmake::Config;
 
 #[allow(clippy::too_many_lines)]
 fn main() {
+    println!("cargo:rerun-if-env-changed=RANDOMX_MSVC_CXX");
     let randomx_dir = env::var("RANDOMX_DIR").unwrap_or_else(|_| "RandomX".to_string());
 
     // Determine whether we're building with optimizations (release or opt-level > 0).
