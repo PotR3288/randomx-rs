@@ -79,6 +79,11 @@ fn main() {
             // Ninja, where the -D compiler defines are honored. cmake-rs then
             // skips -Thost=x64/-Ax64 automatically (they are VS-generator-only).
             config.generator("Ninja");
+            // clang-cl does NOT imply AES from /arch:AVX2 the way cl.exe does,
+            // so intrinsics like _mm_aesenc_si128 fail with "requires target
+            // feature 'aes'". /clang:-X passes raw LLVM flags through clang-cl.
+            config.cflag("/clang:-maes");
+            config.cxxflag("/clang:-maes");
         }
         if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
             config.cflag("/arch:AVX2");
