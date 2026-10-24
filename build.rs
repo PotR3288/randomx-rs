@@ -73,6 +73,12 @@ fn main() {
             let cc = if cc.exists() { cc } else { cxxp.clone() };
             config.define("CMAKE_C_COMPILER", cc.to_str().unwrap());
             config.define("CMAKE_CXX_COMPILER", cxx.as_str());
+            // The Visual Studio generator IGNORES -D CMAKE_C/CXX_COMPILER on the
+            // command line (compiler is selected by toolset there, so both end up
+            // cached as UNINITIALIZED and CMake probes cl.exe anyway). Switch to
+            // Ninja, where the -D compiler defines are honored. cmake-rs then
+            // skips -Thost=x64/-Ax64 automatically (they are VS-generator-only).
+            config.generator("Ninja");
         }
         if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
             config.cflag("/arch:AVX2");
