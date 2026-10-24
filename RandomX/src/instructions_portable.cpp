@@ -63,14 +63,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 	// clang-cl defines __SIZEOF_INT128__ above, so mulh/smulh already exist;
 	// and clang-cl's intrin.h lacks the __MACHINEX64* probe macros, which
 	// would explode EVAL_DEFINE's token-pasting. Skip under clang.
-	#if EVAL_DEFINE(__MACHINEARM64_X64(1)) && !defined(__clang__)
+	#if defined(__MACHINEARM64_X64)
 		uint64_t mulh(uint64_t a, uint64_t b) {
 			return __umulh(a, b);
 		}
 		#define HAVE_MULH
 	#endif
 
-	#if EVAL_DEFINE(__MACHINEX64(1)) && !defined(__clang__)
+	#if defined(__MACHINEX64)
 		int64_t smulh(int64_t a, int64_t b) {
 			int64_t hi;
 			_mul128(a, b, &hi);
