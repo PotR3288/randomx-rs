@@ -7,24 +7,7 @@
 
 ## Build Dependencies
 
-This repo makes use of git submodules.
-
-The first time you compile, or perhaps after a big update after a `git pull`, you need to update the submodules:
-
-```bash
-git submodule init
-git submodule update
-```
-
-If you see an error like
-
-```
-fatal: Needed a single revision
-Unable to find current revision in submodule path 'RandomX'
-```
-
-you might want to see if there is a `RandomX` folder in the source tree. (On case insensitive systems, like OsX and Windows, it might
-even be `randomx`). Deleting this folder and repeating the commands above should resolve the issue.
+The RandomX C/C++ sources are vendored directly in this repository (`RandomX/`), so there is no submodule to initialize — a plain `git clone` and `cargo build` work out of the box. (See [About this fork](#about-this-fork) for why.)
 
 ### Mac
 
