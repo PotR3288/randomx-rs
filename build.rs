@@ -31,7 +31,7 @@ fn main() {
     let randomx_dir = env::var("RANDOMX_DIR").unwrap_or_else(|_| "RandomX".to_string());
 
     // Determine whether we're building with optimizations (release or opt-level > 0).
-    let is_optimized = match env::var("CARGO_OPT_LEVEL") {
+    let is_optimized = match env::var("OPT_LEVEL") {
         Ok(level) => level != "0",
         Err(_) => false,
     };
