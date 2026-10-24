@@ -72,7 +72,11 @@ fn main() {
         // clang-cl only supports thin LTO via lld-link; not worth wiring for now.
         let using_clang_cl = env::var("RANDOMX_MSVC_CXX").is_ok()
             && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
-        if !using_clang_cl {
+        let is_msvc = env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+        // LTO env flags only on GCC/Clang (unix) targets: cl.exe D9002-ignores them and
+        // CMAKE_INTERPROCEDURAL_OPTIMIZATION under MSVC produced LNK2019 on
+        // randomx_release_dataset / randomx_get_flags. MSVC gets /arch:AVX2 only.
+        if !using_clang_cl && !is_msvc {
             let lto_flags = "-flto=thin";
             config.env("CFLAGS", lto_flags).env("CXXFLAGS", lto_flags);
         }
@@ -81,7 +85,7 @@ fn main() {
         // Same clang-cl caveat as the -flto=thin env flags above: IPO with clang-cl
         // produces LLVM bitcode objects that MSVC link.exe cannot consume (LNK2019).
         // Skip IPO for clang-cl; regular cl.exe and GCC keep it.
-        if !using_clang_cl {
+        if !using_clang_cl && !is_msvc {
             config.define("CMAKE_INTERPROCEDURAL_OPTIMIZATION", "ON");
         }
 
