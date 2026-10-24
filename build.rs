@@ -118,29 +118,15 @@ fn main() {
             config.cxxflag("/arch:AVX2");
         }
 
-        // Use -flto=thin via compiler flags — works with GCC, Clang, and AppleClang.
-        // ThinLTO gives ~80-90% of full LTO speedup at a fraction of compile time.
-        // SKIP under clang-cl: -flto=thin emits LLVM bitcode objects that MSVC's
-        // link.exe cannot consume (LNK2019 unresolved randomx_* everywhere).
-        // clang-cl only supports thin LTO via lld-link; not worth wiring for now.
+        // LTO/IPO deliberately OFF everywhere. Every mechanism tried (env
+        // -flto=thin and CMAKE_INTERPROCEDURAL_OPTIMIZATION) emits LTO
+        // bytecode into librandomx.a that the final rustc-driven link cannot
+        // consume: MSVC link.exe -> LNK2019 unresolved randomx_*, and Linux
+        // rust-lld/collect2 -> undefined randomx_* against GCC LTO objects.
+        // Measured hashrates (mingw ~6.72 KH/s, clang-cl 6.74 KH/s, Linux)
+        // were all achieved without LTO/IPO; it buys nothing here.
         let using_clang_cl = clang_cl.is_some()
             && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
-        let is_msvc = env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
-        // LTO env flags only on GCC/Clang (unix) targets: cl.exe D9002-ignores them and
-        // CMAKE_INTERPROCEDURAL_OPTIMIZATION under MSVC produced LNK2019 on
-        // randomx_release_dataset / randomx_get_flags. MSVC gets /arch:AVX2 only.
-        if !using_clang_cl && !is_msvc {
-            let lto_flags = "-flto=thin";
-            config.env("CFLAGS", lto_flags).env("CXXFLAGS", lto_flags);
-        }
-
-        // Also try cmake IPO as a secondary mechanism (works on some toolchains).
-        // Same clang-cl caveat as the -flto=thin env flags above: IPO with clang-cl
-        // produces LLVM bitcode objects that MSVC link.exe cannot consume (LNK2019).
-        // Skip IPO for clang-cl; regular cl.exe and GCC keep it.
-        if !using_clang_cl && !is_msvc {
-            config.define("CMAKE_INTERPROCEDURAL_OPTIMIZATION", "ON");
-        }
 
         if clang_cl.is_none()
             && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
