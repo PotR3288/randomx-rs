@@ -38,8 +38,6 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          submodules: false
 
       - name: Set Matrix
         id: set-matrix
@@ -92,8 +90,6 @@ jobs:
     steps:
       - name: Checkout source code
         uses: actions/checkout@v5
-        with:
-          submodules: recursive
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable

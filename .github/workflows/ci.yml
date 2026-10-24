@@ -33,8 +33,6 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v5
-        with:
-          submodules: "true"
 
       - name: toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -90,8 +88,6 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v5
-        with:
-          submodules: "true"
 
       - name: toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -110,8 +106,6 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v5
-        with:
-          submodules: "true"
 
       - name: toolchain
         uses: dtolnay/rust-toolchain@stable
