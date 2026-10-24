@@ -43,11 +43,22 @@ fn main() {
         let mut config = Config::new(&randomx_dir);
         config.define("DARCH", "native");
 
+        // MSVC defaults the C++ support layer to baseline x86-64 (no AVX2/FMA),
+        // which costs ~2x per-hash vs GCC's -maes/AVX2-class codegen on the same
+        // hardware (measured 409 vs 792 H/s per VM on a Ryzen 3600). Lift the
+        // MSVC codegen floor to AVX2. Gated on the *target* env, so mingw/GCC
+        // and non-Windows builds are untouched. NOTE: the resulting binary
+        // requires an AVX2-capable CPU (Haswell 2013+ / Zen+); a runtime-dispatch
+        // variant is the follow-up if that floor is unacceptable.
+        if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            config.cflag("/arch:AVX2");
+            config.cxxflag("/arch:AVX2");
+        }
+
         // Use -flto=thin via compiler flags — works with GCC, Clang, and AppleClang.
         // ThinLTO gives ~80-90% of full LTO speedup at a fraction of compile time.
         let lto_flags = "-flto=thin";
-        config.env("CFLAGS", lto_flags)
-              .env("CXXFLAGS", lto_flags);
+        config.env("CFLAGS", lto_flags).env("CXXFLAGS", lto_flags);
 
         // Also try cmake IPO as a secondary mechanism (works on some toolchains).
         config.define("CMAKE_INTERPROCEDURAL_OPTIMIZATION", "ON");
@@ -59,9 +70,7 @@ fn main() {
 
         path
     } else {
-        Config::new(&randomx_dir)
-            .define("DARCH", "native")
-            .build()
+        Config::new(&randomx_dir).define("DARCH", "native").build()
     };
 
     println!("cargo:rustc-link-search=native={}/lib64", randomx_path.display());
@@ -101,7 +110,10 @@ fn verify_lto(build_dir: &PathBuf) {
 
     // Heuristic 1: binary size check.
     let Ok(metadata) = fs::metadata(&lib_path) else {
-        println!("cargo:warning=LTO verification skipped — cannot stat {}", lib_path.display());
+        println!(
+            "cargo:warning=LTO verification skipped — cannot stat {}",
+            lib_path.display()
+        );
         return;
     };
     let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
@@ -114,19 +126,18 @@ fn verify_lto(build_dir: &PathBuf) {
             size_mb
         );
     } else {
-        println!("cargo:warning=LTO verified — static library size {:.1} MB (LTO appears active)", size_mb);
+        println!(
+            "cargo:warning=LTO verified — static library size {:.1} MB (LTO appears active)",
+            size_mb
+        );
     }
 
     // Heuristic 2: try llvm-nm to look for LTO-related symbols.
-    if let Ok(output) = std::process::Command::new("llvm-nm")
-        .arg(&lib_path)
-        .output()
-    {
+    if let Ok(output) = std::process::Command::new("llvm-nm").arg(&lib_path).output() {
         if output.status.success() {
             let nm_output = String::from_utf8_lossy(&output.stdout);
             // LTO'd libraries often contain __llvm_profile_* or thinlto-related symbols.
-            let has_lto_markers = nm_output.contains("thinlto")
-                || nm_output.contains("__llvm_profile");
+            let has_lto_markers = nm_output.contains("thinlto") || nm_output.contains("__llvm_profile");
             if !has_lto_markers {
                 println!(
                     "cargo:warning=LTO verification: llvm-nm found no LTO markers in library — \
