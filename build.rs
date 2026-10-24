@@ -50,6 +50,16 @@ fn main() {
         // and non-Windows builds are untouched. NOTE: the resulting binary
         // requires an AVX2-capable CPU (Haswell 2013+ / Zen+); a runtime-dispatch
         // variant is the follow-up if that floor is unacceptable.
+        // clang-cl discriminator: RANDOMX_MSVC_CXX=<path to clang-cl.exe> swaps the
+        // MSVC-side C/C++ compiler for LLVM's MSVC-compatible frontend while keeping
+        // the same ABI, flags, and linker. Unset = plain cl (cargo default).
+        if let Ok(cxx) = env::var("RANDOMX_MSVC_CXX") {
+            let cxxp = std::path::PathBuf::from(&cxx);
+            let cc = cxxp.with_file_name("clang-cl.exe");
+            let cc = if cc.exists() { cc } else { cxxp.clone() };
+            config.define("CMAKE_C_COMPILER", cc.to_str().unwrap());
+            config.define("CMAKE_CXX_COMPILER", cxx.as_str());
+        }
         if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
             config.cflag("/arch:AVX2");
             config.cxxflag("/arch:AVX2");
