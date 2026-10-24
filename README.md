@@ -121,4 +121,39 @@ Quick test with built binaries
 ```bash
 find target -name randomx-tests -exec {} \;
 ```
+
+## About this fork
+
+This is a fork of [tari-project/randomx-rs](https://github.com/tari-project/randomx-rs), based on the `development` branch at v1.6.0 (RandomX C++ v1.2.3). The public API stays compatible with upstream — code written against the crates.io crate compiles unchanged, and nothing existing was renamed or re-signatured. What follows is what this fork adds, changes, and removes, in plain terms.
+
+### Added
+
+**`Send`/`Sync` for datasets and VMs.** The upstream types cannot be moved to another thread or shared between threads, even though the underlying C library is safe under exactly that usage: each `RandomXVM` owns its own state, and a dataset is read-only once initialized. This fork adds `unsafe impl Send/Sync`, so a miner can hand every worker thread its own VM while they all share one dataset — no wrapper types needed.
+
+**Parallel dataset initialization.** Building the ~2 GiB dataset single-threaded takes tens of seconds at startup. The new `RandomXDataset::new_uninitialized()` allocates the memory without initializing it, and `init_range(start, count)` initializes a slice of it; disjoint slices can be initialized concurrently from multiple threads (the same scheme xmrig uses to parallelize dataset generation). `reinit_with_cache()` re-keys an existing dataset for a new job without reallocating. The original `new(flags, cache, start)` is now implemented on top of these and behaves exactly as before.
+
+**Per-NUMA dataset replicas.** On multi-socket or multi-die machines, a worker that reads a 2 GiB dataset living in another NUMA node's memory pays an interconnect penalty on every access. `copy_from()` (with the `raw_memory()`/`memory_size()` helpers) lets you memcpy a fully initialized dataset into a second allocation so each NUMA node holds its own local copy, and workers can be pinned to their node's copy.
+
+**Win32 error codes from large-page allocation.** When the 2 GiB large-page allocation fails on Windows, upstream only says "Could not allocate dataset". The new `randomx_alloc_dataset_ex()` C function (exposed in Rust as `new_uninitialized_with_err()`, Windows-only) also reports the Win32 error code — e.g. 1450 (`ERROR_NOT_ENOUGH_MEMORY`) — so you can tell RAM exhaustion from a hugepage configuration problem instead of guessing.
+
+### Changed
+
+**The RandomX C++ source is now vendored in this repo.** Upstream keeps it as a git submodule; here the tree is committed directly and `.gitmodules` was removed. The fork needed its own patched C layer (below), and a submodule pin can only point at commits that exist on a remote — so the tree was copied in to make the fork self-contained: `cargo build` works from any checkout or rev pin without resolving submodules, and future C-layer patches are ordinary commits here.
+
+**Linux huge pages prefer 1 GiB.** The vendored `virtual_memory.c` now tries `MAP_HUGETLB | MAP_HUGE_1GB` first when allocating the dataset's large pages, falling back to the default 2 MiB size if 1 GiB pages are not reserved on the system. A ~2 GiB dataset as one or two 1 GiB mappings means fewer TLB misses; behavior is unchanged on stock systems because of the fallback.
+
+**Windows builds now produce competitive hashrates.** Upstream's `build.rs` compiles the RandomX C++ support layer with MSVC defaults — baseline x86-64, no AVX2 — which measured ~434 H/s per VM on a Ryzen 3600. This fork:
+
+- passes `/arch:AVX2` to the C/C++ compiler for msvc targets;
+- auto-detects `clang-cl.exe` (LLVM) and uses it as the MSVC-side compiler when building with optimizations, because cl.exe's codegen of this layer is ~60% slower per hash than clang-cl's (~740 H/s/VM vs 434); a full 12-VM build now matches mingw (6.74 vs 6.72 KH/s). `RANDOMX_MSVC_CXX` overrides the choice: a path pins a specific compiler, and `0` forces stock cl.exe;
+- adds the flags clang-cl needs that cl.exe implies (`/clang:-maes` for AES-NI, `/EHsc` because RandomX throws `std::bad_alloc`), forces the Ninja generator so those defines are honored, and wipes stale CMake caches when the compiler switches;
+- fixes cross-compilation: `advapi32` is linked based on the *target* OS rather than the host's, and windows-gnu (mingw) targets link libstdc++.
+
+LTO/IPO was tried and then removed entirely — every mechanism emits objects that MSVC's `link.exe` (and Linux rust-lld against GCC LTO objects) cannot consume, and measured hashrates were identical without it. The crate's own `[profile.release]` now sets `lto = "fat"`, `opt-level = 3`, `codegen-units = 1` for standalone builds of this repo; when consumed as a dependency the top-level workspace profile applies instead.
+
+### Removed
+
+- The git submodule workflow for the RandomX C++ tree (see above).
+- An internal prefix-zeroing workaround in dataset creation that predated `init_range` — range initialization handles uninitialised memory properly now.
+- A/B experiment knobs for prefetch hints and L3 non-temporal stores were added during development and reverted; no API or flags from them remain.
  
