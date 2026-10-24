@@ -29,7 +29,31 @@ use cmake::Config;
 #[allow(clippy::too_many_lines)]
 fn main() {
     println!("cargo:rerun-if-env-changed=RANDOMX_MSVC_CXX");
+    println!("cargo:rerun-if-env-changed=LLVM_INSTALL_DIR");
     let randomx_dir = env::var("RANDOMX_DIR").unwrap_or_else(|_| "RandomX".to_string());
+
+    // Resolve the MSVC-side C/C++ compiler. RANDOMX_MSVC_CXX is an explicit
+    // override: a path to clang-cl.exe selects it; "0", "cl", "false" or empty
+    // forces the stock cl.exe. When unset on optimized msvc builds we
+    // auto-detect clang-cl: cl.exe codegen for the RandomX C++ support layer
+    // is ~60% slower per-hash than clang-cl (measured 434 vs 740 H/s per VM
+    // on a Ryzen 3600), so auto-detection gives local builders the fast path
+    // with zero configuration.
+    let clang_cl = match env::var("RANDOMX_MSVC_CXX") {
+        Ok(v) => {
+            let v = v.trim().to_string();
+            if v.is_empty()
+                || v == "0"
+                || v.eq_ignore_ascii_case("cl")
+                || v.eq_ignore_ascii_case("false")
+            {
+                None
+            } else {
+                Some(v)
+            }
+        }
+        Err(_) => find_clang_cl(),
+    };
 
     // Determine whether we're building with optimizations (release or opt-level > 0).
     let is_optimized = match env::var("OPT_LEVEL") {
@@ -46,11 +70,11 @@ fn main() {
         // CMake then reuses its cached compiler instead of re-probing, silently
         // falling back to MSVC despite the -D defines. Nuke out/build so every
         // override run configures from scratch.
-        if env::var("RANDOMX_MSVC_CXX").is_ok() {
+        if clang_cl.is_some() {
             let out = env::var("OUT_DIR").expect("OUT_DIR");
             let build_dir = std::path::Path::new(&out).join("build");
             if build_dir.exists() {
-                println!("cargo:warning=randomx-rs: wiping cached CMake build tree (RANDOMX_MSVC_CXX active)");
+                println!("cargo:warning=randomx-rs: wiping cached CMake build tree (clang-cl compiler active)");
                 std::fs::remove_dir_all(&build_dir).expect("failed to wipe cached CMake build dir");
             }
         }
@@ -67,7 +91,7 @@ fn main() {
         // clang-cl discriminator: RANDOMX_MSVC_CXX=<path to clang-cl.exe> swaps the
         // MSVC-side C/C++ compiler for LLVM's MSVC-compatible frontend while keeping
         // the same ABI, flags, and linker. Unset = plain cl (cargo default).
-        if let Ok(cxx) = env::var("RANDOMX_MSVC_CXX") {
+        if let Some(ref cxx) = clang_cl {
             let cxxp = std::path::PathBuf::from(&cxx);
             let cc = cxxp.with_file_name("clang-cl.exe");
             let cc = if cc.exists() { cc } else { cxxp.clone() };
@@ -99,7 +123,7 @@ fn main() {
         // SKIP under clang-cl: -flto=thin emits LLVM bitcode objects that MSVC's
         // link.exe cannot consume (LNK2019 unresolved randomx_* everywhere).
         // clang-cl only supports thin LTO via lld-link; not worth wiring for now.
-        let using_clang_cl = env::var("RANDOMX_MSVC_CXX").is_ok()
+        let using_clang_cl = clang_cl.is_some()
             && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
         let is_msvc = env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
         // LTO env flags only on GCC/Clang (unix) targets: cl.exe D9002-ignores them and
@@ -116,6 +140,12 @@ fn main() {
         // Skip IPO for clang-cl; regular cl.exe and GCC keep it.
         if !using_clang_cl && !is_msvc {
             config.define("CMAKE_INTERPROCEDURAL_OPTIMIZATION", "ON");
+        }
+
+        if clang_cl.is_none()
+            && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+        {
+            println!("cargo:warning=randomx-rs: clang-cl not found; using cl.exe (measured ~60% slower RandomX codegen). Install LLVM (winget install LLVM.LLVM), run cargo clean -p randomx-rs, and rebuild -- or set RANDOMX_MSVC_CXX=<path to clang-cl.exe> to override.");
         }
 
         let path = config.build();
@@ -231,4 +261,40 @@ fn collect_lib_files(dir: &PathBuf, out: &mut Vec<PathBuf>) {
             }
         }
     }
+}
+
+
+/// Locate clang-cl.exe without any configuration: PATH first, then the
+/// standard LLVM install locations. Returns None on non-msvc targets so
+/// Linux/mingw builds are never touched by auto-detection.
+fn find_clang_cl() -> Option<String> {
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
+        return None;
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 1. PATH lookup (works when LLVM is on PATH or via VS integration).
+    if let Ok(path_var) = env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            candidates.push(dir.join("clang-cl.exe"));
+        }
+    }
+
+    // 2. LLVM_INSTALL_DIR hint.
+    if let Ok(dir) = env::var("LLVM_INSTALL_DIR") {
+        candidates.push(PathBuf::from(dir).join("bin").join("clang-cl.exe"));
+    }
+
+    // 3. Standard install roots.
+    for var in ["ProgramFiles", "ProgramFiles(x86)", "LocalAppData"] {
+        if let Ok(root) = env::var(var) {
+            candidates.push(PathBuf::from(root).join("LLVM").join("bin").join("clang-cl.exe"));
+        }
+    }
+
+    candidates
+        .into_iter()
+        .find(|c| c.exists())
+        .and_then(|c| c.to_str().map(|s| s.to_string()))
 }
