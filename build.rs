@@ -40,6 +40,19 @@ fn main() {
     // because cmake's CMAKE_INTERPROCEDURAL_OPTIMIZATION is unreliable across toolchains
     // and often silently falls back to non-LTO compilation.
     let randomx_path = if is_optimized {
+        // Wipe the cached CMake build tree when the clang-cl override is active.
+        // A stale CMakeCache.txt carries CMAKE_CXX_COMPILER as UNINITIALIZED and
+        // CMake then reuses its cached compiler instead of re-probing, silently
+        // falling back to MSVC despite the -D defines. Nuke out/build so every
+        // override run configures from scratch.
+        if env::var("RANDOMX_MSVC_CXX").is_ok() {
+            let out = env::var("OUT_DIR").expect("OUT_DIR");
+            let build_dir = std::path::Path::new(&out).join("build");
+            if build_dir.exists() {
+                println!("cargo:warning=randomx-rs: wiping cached CMake build tree (RANDOMX_MSVC_CXX active)");
+                std::fs::remove_dir_all(&build_dir).expect("failed to wipe cached CMake build dir");
+            }
+        }
         let mut config = Config::new(&randomx_dir);
         config.define("DARCH", "native");
 
