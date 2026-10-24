@@ -189,10 +189,8 @@ mod tests {
     use quickcheck::QuickCheck;
 
     use crate::test_utils::{
-        fuzz_randomx_alloc_cache,
-        fuzz_randomx_create_vm_with_cache_and_dataset,
-        fuzz_randomx_create_vm_with_cache_only,
-        fuzz_randomx_vm_calculate_hash_with_cache_and_dataset,
+        fuzz_randomx_alloc_cache, fuzz_randomx_create_vm_with_cache_and_dataset,
+        fuzz_randomx_create_vm_with_cache_only, fuzz_randomx_vm_calculate_hash_with_cache_and_dataset,
         fuzz_randomx_vm_calculate_hash_with_cache_only,
     };
 

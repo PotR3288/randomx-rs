@@ -16,9 +16,6 @@ name: CI
       - synchronize
   merge_group:
 
-env:
-  nightly_toolchain: nightly-2025-06-01
-
 concurrency:
   # https://docs.github.com/en/actions/examples/using-concurrency-expressions-and-a-test-matrix
   group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
@@ -35,9 +32,9 @@ jobs:
         uses: actions/checkout@v5
 
       - name: toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ env.nightly_toolchain }}
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache rust dependencies
@@ -45,14 +42,16 @@ jobs:
 
       - name: cargo fmt
         run: |
-          cargo +${{ env.nightly_toolchain }} fmt --all -- --check
+          cargo fmt --all -- --check
 
       - name: Clippy check
         # The inherited `cargo lints` step is dead: the only published version of the
         # cargo-lints crate (0.1.0, 2021) has no clippy subcommand. Run plain clippy on
-        # the pinned nightly instead; lints.toml documents the intended lint policy.
+        # stable instead; rustfmt.toml deliberately contains only stable options so
+        # local `cargo fmt` and this check can never disagree. lints.toml documents the
+        # intended lint policy.
         run: |
-          cargo +${{ env.nightly_toolchain }} clippy --all-targets --all-features
+          cargo clippy --all-targets --all-features
 
       - name: cargo machete
         run: |

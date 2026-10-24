@@ -48,23 +48,10 @@ use std::{
 #[cfg(windows)]
 use bindings::randomx_alloc_dataset_ex;
 use bindings::{
-    randomx_alloc_cache,
-    randomx_alloc_dataset,
-    randomx_cache,
-    randomx_calculate_hash,
-    randomx_create_vm,
-    randomx_dataset,
-    randomx_dataset_item_count,
-    randomx_destroy_vm,
-    randomx_get_dataset_memory,
-    randomx_init_cache,
-    randomx_init_dataset,
-    randomx_release_cache,
-    randomx_release_dataset,
-    randomx_vm,
-    randomx_vm_set_cache,
-    randomx_vm_set_dataset,
-    RANDOMX_HASH_SIZE,
+    randomx_alloc_cache, randomx_alloc_dataset, randomx_cache, randomx_calculate_hash, randomx_create_vm,
+    randomx_dataset, randomx_dataset_item_count, randomx_destroy_vm, randomx_get_dataset_memory, randomx_init_cache,
+    randomx_init_dataset, randomx_release_cache, randomx_release_dataset, randomx_vm, randomx_vm_set_cache,
+    randomx_vm_set_dataset, RANDOMX_HASH_SIZE,
 };
 use bitflags::bitflags;
 use libc::{c_ulong, c_void};
@@ -74,10 +61,7 @@ use thiserror::Error;
 /// [`RandomXDataset::get_data`] is `RandomXDataset::count()` items of this size.
 pub use crate::bindings::RANDOMX_DATASET_ITEM_SIZE;
 use crate::bindings::{
-    randomx_calculate_hash_first,
-    randomx_calculate_hash_last,
-    randomx_calculate_hash_next,
-    randomx_get_flags,
+    randomx_calculate_hash_first, randomx_calculate_hash_last, randomx_calculate_hash_next, randomx_get_flags,
 };
 
 bitflags! {
@@ -391,7 +375,7 @@ impl RandomXDataset {
                 return Ok(x);
                 #[cfg(not(target_os = "windows"))]
                 return Ok(u32::try_from(x)?);
-            },
+            }
         }
     }
 
@@ -562,7 +546,7 @@ impl RandomXVM {
                     linked_cache: cache,
                     linked_dataset: dataset,
                 })
-            },
+            }
         }
     }
 
@@ -756,14 +740,8 @@ mod tests {
     };
 
     use crate::{
-        bindings::randomx_get_dataset_memory,
-        RandomXCache,
-        RandomXCacheInner,
-        RandomXDataset,
-        RandomXDatasetInner,
-        RandomXFlag,
-        RandomXVM,
-        RANDOMX_DATASET_ITEM_SIZE,
+        bindings::randomx_get_dataset_memory, RandomXCache, RandomXCacheInner, RandomXDataset, RandomXDatasetInner,
+        RandomXFlag, RandomXVM, RANDOMX_DATASET_ITEM_SIZE,
     };
 
     #[test]
@@ -1005,10 +983,13 @@ mod tests {
         let dataset = RandomXDataset::new(flags, cache.clone(), 0).unwrap();
         let vm = RandomXVM::new(flags, Some(cache.clone()), Some(dataset.clone())).unwrap();
         let hash = vm.calculate_hash(input.as_bytes()).expect("no data");
-        assert_eq!(hash, [
-            114, 81, 192, 5, 165, 242, 107, 100, 184, 77, 37, 129, 52, 203, 217, 227, 65, 83, 215, 213, 59, 71, 32,
-            172, 253, 155, 204, 111, 183, 213, 157, 155
-        ]);
+        assert_eq!(
+            hash,
+            [
+                114, 81, 192, 5, 165, 242, 107, 100, 184, 77, 37, 129, 52, 203, 217, 227, 65, 83, 215, 213, 59, 71, 32,
+                172, 253, 155, 204, 111, 183, 213, 157, 155
+            ]
+        );
         drop(vm);
         drop(dataset);
         drop(cache);
@@ -1017,10 +998,13 @@ mod tests {
         let dataset1 = RandomXDataset::new(flags, cache1.clone(), 0).unwrap();
         let vm1 = RandomXVM::new(flags, Some(cache1.clone()), Some(dataset1.clone())).unwrap();
         let hash1 = vm1.calculate_hash(input.as_bytes()).expect("no data");
-        assert_eq!(hash1, [
-            114, 81, 192, 5, 165, 242, 107, 100, 184, 77, 37, 129, 52, 203, 217, 227, 65, 83, 215, 213, 59, 71, 32,
-            172, 253, 155, 204, 111, 183, 213, 157, 155
-        ]);
+        assert_eq!(
+            hash1,
+            [
+                114, 81, 192, 5, 165, 242, 107, 100, 184, 77, 37, 129, 52, 203, 217, 227, 65, 83, 215, 213, 59, 71, 32,
+                172, 253, 155, 204, 111, 183, 213, 157, 155
+            ]
+        );
         drop(vm1);
         drop(dataset1);
         drop(cache1);
@@ -1037,10 +1021,13 @@ mod tests {
         drop(dataset);
         drop(cache);
         let hash = vm.calculate_hash(input.as_bytes()).expect("no data");
-        assert_eq!(hash, [
-            114, 81, 192, 5, 165, 242, 107, 100, 184, 77, 37, 129, 52, 203, 217, 227, 65, 83, 215, 213, 59, 71, 32,
-            172, 253, 155, 204, 111, 183, 213, 157, 155
-        ]);
+        assert_eq!(
+            hash,
+            [
+                114, 81, 192, 5, 165, 242, 107, 100, 184, 77, 37, 129, 52, 203, 217, 227, 65, 83, 215, 213, 59, 71, 32,
+                172, 253, 155, 204, 111, 183, 213, 157, 155
+            ]
+        );
         drop(vm);
 
         let cache1 = RandomXCache::new(flags, key.as_bytes()).unwrap();
@@ -1049,10 +1036,13 @@ mod tests {
         drop(dataset1);
         drop(cache1);
         let hash1 = vm1.calculate_hash(input.as_bytes()).expect("no data");
-        assert_eq!(hash1, [
-            114, 81, 192, 5, 165, 242, 107, 100, 184, 77, 37, 129, 52, 203, 217, 227, 65, 83, 215, 213, 59, 71, 32,
-            172, 253, 155, 204, 111, 183, 213, 157, 155
-        ]);
+        assert_eq!(
+            hash1,
+            [
+                114, 81, 192, 5, 165, 242, 107, 100, 184, 77, 37, 129, 52, 203, 217, 227, 65, 83, 215, 213, 59, 71, 32,
+                172, 253, 155, 204, 111, 183, 213, 157, 155
+            ]
+        );
         drop(vm1);
     }
 

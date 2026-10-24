@@ -45,7 +45,7 @@ fn main() {
             } else {
                 Some(v)
             }
-        },
+        }
         Err(_) => find_clang_cl(),
     };
 
