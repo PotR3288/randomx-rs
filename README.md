@@ -1,5 +1,5 @@
-![CI](https://github.com/tari-project/randomx-rs/actions/workflows/ci.yml/badge.svg)
-[![Coverage Status](https://coveralls.io/repos/github/delta1/randomx-rs/badge.svg?branch=cov-temp)](https://coveralls.io/github/delta1/randomx-rs?branch=cov-temp)
+![CI](https://github.com/PotR3288/randomx-rs/actions/workflows/ci.yml/badge.svg)
+[![Coverage Status](https://coveralls.io/repos/github/PotR3288/randomx-rs/badge.svg?branch=development)](https://coveralls.io/github/PotR3288/randomx-rs?branch=development)
 
 # RandomX-rs
 
