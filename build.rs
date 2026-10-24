@@ -67,8 +67,15 @@ fn main() {
 
         // Use -flto=thin via compiler flags — works with GCC, Clang, and AppleClang.
         // ThinLTO gives ~80-90% of full LTO speedup at a fraction of compile time.
-        let lto_flags = "-flto=thin";
-        config.env("CFLAGS", lto_flags).env("CXXFLAGS", lto_flags);
+        // SKIP under clang-cl: -flto=thin emits LLVM bitcode objects that MSVC's
+        // link.exe cannot consume (LNK2019 unresolved randomx_* everywhere).
+        // clang-cl only supports thin LTO via lld-link; not worth wiring for now.
+        let using_clang_cl = env::var("RANDOMX_MSVC_CXX").is_ok()
+            && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+        if !using_clang_cl {
+            let lto_flags = "-flto=thin";
+            config.env("CFLAGS", lto_flags).env("CXXFLAGS", lto_flags);
+        }
 
         // Also try cmake IPO as a secondary mechanism (works on some toolchains).
         config.define("CMAKE_INTERPROCEDURAL_OPTIMIZATION", "ON");
