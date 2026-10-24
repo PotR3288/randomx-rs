@@ -84,6 +84,10 @@ fn main() {
             // feature 'aes'". /clang:-X passes raw LLVM flags through clang-cl.
             config.cflag("/clang:-maes");
             config.cxxflag("/clang:-maes");
+            // clang-cl leaves C++ exceptions off in this configuration
+            // (RandomX's InterpretedVm::operator new throws std::bad_alloc).
+            config.cflag("/EHsc");
+            config.cxxflag("/EHsc");
         }
         if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
             config.cflag("/arch:AVX2");
