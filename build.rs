@@ -78,7 +78,12 @@ fn main() {
         }
 
         // Also try cmake IPO as a secondary mechanism (works on some toolchains).
-        config.define("CMAKE_INTERPROCEDURAL_OPTIMIZATION", "ON");
+        // Same clang-cl caveat as the -flto=thin env flags above: IPO with clang-cl
+        // produces LLVM bitcode objects that MSVC link.exe cannot consume (LNK2019).
+        // Skip IPO for clang-cl; regular cl.exe and GCC keep it.
+        if !using_clang_cl {
+            config.define("CMAKE_INTERPROCEDURAL_OPTIMIZATION", "ON");
+        }
 
         let path = config.build();
 
