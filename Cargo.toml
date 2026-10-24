@@ -2,7 +2,7 @@
 name = "randomx-rs"
 description = "Rust bindings for the RandomX Proof-of-Work"
 authors = ["The Tari Development Community"]
-repository = "https://github.com/tari-project/randomx-rs"
+repository = "https://github.com/PotR3288/randomx-rs"
 homepage = "https://tari.com"
 readme = "README.md"
 license = "BSD-3-Clause"
