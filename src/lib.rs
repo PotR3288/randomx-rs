@@ -235,7 +235,8 @@ impl RandomXDataset {
     ///
     /// `start` is the item number where initialization should start. **Pass 0.** The items
     /// `[start, RandomXDataset::count())` are initialized by the RandomX library; the leading `start` items are
-    /// zeroed, since the library never writes them.
+    /// left undefined — the library never writes them and this wrapper does not zero them either (freshly
+    /// allocated pages happen to read as zero on most platforms, but that is an allocator detail, not a contract).
     ///
     /// # Warning
     ///
@@ -243,7 +244,7 @@ impl RandomXDataset {
     /// dataset may be used (see the note on `randomx_init_dataset` in `randomx.h`). A non-zero `start` therefore
     /// produces a dataset that does **not** satisfy that precondition and must **not** be passed to
     /// [`RandomXVM::new`] or [`RandomXVM::reinit_dataset`]. Doing so is not detected or reported: the VM will read
-    /// the zeroed leading items as though they were real dataset items and silently compute hashes that disagree
+    /// the uninitialised leading items as though they were real dataset items and silently compute hashes that disagree
     /// with every other RandomX implementation.
     ///
     /// The only legitimate use of a non-zero `start` in the upstream API is splitting the initialization of a single
@@ -829,16 +830,11 @@ mod tests {
         let memory = unsafe { randomx_get_dataset_memory(dataset.inner.dataset_ptr) };
         assert!(!memory.is_null());
         let len = usize::try_from(item_count).unwrap() * RANDOMX_DATASET_ITEM_SIZE;
-        // SAFETY: `memory` is the non-null dataset buffer of `item_count` items, fully initialised by
-        // `RandomXDataset::new`, and it is kept alive by `dataset` for the duration of the borrow.
+        // SAFETY: `memory` is the non-null dataset buffer of `item_count` items, kept alive by `dataset` for the
+        // duration of the borrow. Only `[START, item_count)` has been initialised; the leading `START` items are
+        // undefined (see the docs on `new`), so this test deliberately does not read or assert on them.
         let data = unsafe { std::slice::from_raw_parts(memory.cast::<u8>(), len) };
 
-        // The library never writes the first `START` items, so `new` must have zeroed them.
-        let prefix = usize::try_from(START).unwrap() * RANDOMX_DATASET_ITEM_SIZE;
-        assert!(
-            data[..prefix].iter().all(|&b| b == 0),
-            "The uninitialised prefix was not zeroed"
-        );
         // The final item must be initialised, i.e. the range is not *under*-initialised. Note that this assertion
         // does not by itself catch a reintroduced overflow: the last item is written both when the correct
         // remaining count is passed and when the full item count is passed. What catches that regression is the
