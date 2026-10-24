@@ -20,9 +20,7 @@
 // WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 // USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use std::env;
-use std::fs;
-use std::path::PathBuf;
+use std::{env, fs, path::PathBuf};
 
 use cmake::Config;
 
@@ -42,16 +40,12 @@ fn main() {
     let clang_cl = match env::var("RANDOMX_MSVC_CXX") {
         Ok(v) => {
             let v = v.trim().to_string();
-            if v.is_empty()
-                || v == "0"
-                || v.eq_ignore_ascii_case("cl")
-                || v.eq_ignore_ascii_case("false")
-            {
+            if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("cl") || v.eq_ignore_ascii_case("false") {
                 None
             } else {
                 Some(v)
             }
-        }
+        },
         Err(_) => find_clang_cl(),
     };
 
@@ -125,13 +119,14 @@ fn main() {
         // rust-lld/collect2 -> undefined randomx_* against GCC LTO objects.
         // Measured hashrates (mingw ~6.72 KH/s, clang-cl 6.74 KH/s, Linux)
         // were all achieved without LTO/IPO; it buys nothing here.
-        let using_clang_cl = clang_cl.is_some()
-            && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+        let using_clang_cl = clang_cl.is_some() && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
 
-        if clang_cl.is_none()
-            && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
-        {
-            println!("cargo:warning=randomx-rs: clang-cl not found; using cl.exe (measured ~60% slower RandomX codegen). Install LLVM (winget install LLVM.LLVM), run cargo clean -p randomx-rs, and rebuild -- or set RANDOMX_MSVC_CXX=<path to clang-cl.exe> to override.");
+        if clang_cl.is_none() && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            println!(
+                "cargo:warning=randomx-rs: clang-cl not found; using cl.exe (measured ~60% slower RandomX codegen). \
+                 Install LLVM (winget install LLVM.LLVM), run cargo clean -p randomx-rs, and rebuild -- or set \
+                 RANDOMX_MSVC_CXX=<path to clang-cl.exe> to override."
+            );
         }
 
         let path = config.build();
@@ -192,8 +187,8 @@ fn verify_lto(build_dir: &PathBuf) {
     // RandomX without LTO is typically ~35-45 MB; with thin LTO it's ~10-15 MB.
     if size_mb > 25.0 {
         println!(
-            "cargo:warning=LTO may not be active — static library is {:.1} MB (expected <15 MB with LTO). \
-             Check compiler flags and toolchain support.",
+            "cargo:warning=LTO may not be active — static library is {:.1} MB (expected <15 MB with LTO). Check \
+             compiler flags and toolchain support.",
             size_mb
         );
     } else {
@@ -211,8 +206,8 @@ fn verify_lto(build_dir: &PathBuf) {
             let has_lto_markers = nm_output.contains("thinlto") || nm_output.contains("__llvm_profile");
             if !has_lto_markers {
                 println!(
-                    "cargo:warning=LTO verification: llvm-nm found no LTO markers in library — \
-                     LTO may not have been applied. Size check was {:.1} MB.",
+                    "cargo:warning=LTO verification: llvm-nm found no LTO markers in library — LTO may not have been \
+                     applied. Size check was {:.1} MB.",
                     size_mb
                 );
             }
@@ -248,7 +243,6 @@ fn collect_lib_files(dir: &PathBuf, out: &mut Vec<PathBuf>) {
         }
     }
 }
-
 
 /// Locate clang-cl.exe without any configuration: PATH first, then the
 /// standard LLVM install locations. Returns None on non-msvc targets so

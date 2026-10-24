@@ -47,13 +47,12 @@ jobs:
         run: |
           cargo +${{ env.nightly_toolchain }} fmt --all -- --check
 
-      - name: Install cargo-lints
+      - name: Clippy check
+        # The inherited `cargo lints` step is dead: the only published version of the
+        # cargo-lints crate (0.1.0, 2021) has no clippy subcommand. Run plain clippy on
+        # the pinned nightly instead; lints.toml documents the intended lint policy.
         run: |
-          cargo install cargo-lints
-
-      - name: Clippy check (with lints)
-        run: |
-          cargo lints clippy --all-targets --all-features
+          cargo +${{ env.nightly_toolchain }} clippy --all-targets --all-features
 
       - name: cargo machete
         run: |

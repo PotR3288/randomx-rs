@@ -38,8 +38,15 @@ mod bindings;
 /// Test utilities for fuzzing
 pub mod test_utils;
 
-use std::{convert::TryFrom, num::TryFromIntError, ptr, sync::{Arc, Mutex}};
+use std::{
+    convert::TryFrom,
+    num::TryFromIntError,
+    ptr,
+    sync::{Arc, Mutex},
+};
 
+#[cfg(windows)]
+use bindings::randomx_alloc_dataset_ex;
 use bindings::{
     randomx_alloc_cache,
     randomx_alloc_dataset,
@@ -59,8 +66,6 @@ use bindings::{
     randomx_vm_set_dataset,
     RANDOMX_HASH_SIZE,
 };
-#[cfg(windows)]
-use bindings::randomx_alloc_dataset_ex;
 use bitflags::bitflags;
 use libc::{c_ulong, c_void};
 use thiserror::Error;
@@ -297,7 +302,7 @@ impl RandomXDataset {
         }
     }
 
-#[cfg(windows)]
+    #[cfg(windows)]
     /// Allocate a dataset buffer without initializing its items. Like [`new_uninitialized`], but when
     /// `FLAG_LARGE_PAGES` is set and allocation fails, returns the Win32 error code (e.g. 1450/1455
     /// = insufficient physical RAM) in addition to the generic failure — useful for diagnostic logging
@@ -316,9 +321,10 @@ impl RandomXDataset {
         let dataset_ptr = unsafe { randomx_alloc_dataset_ex(flags.bits(), &mut win32_err) };
         if dataset_ptr.is_null() {
             if win32_err != 0 {
-                Err(RandomXError::CreationError(
-                    format!("Could not allocate dataset (Win32 error: {})", win32_err),
-                ))
+                Err(RandomXError::CreationError(format!(
+                    "Could not allocate dataset (Win32 error: {})",
+                    win32_err
+                )))
             } else {
                 Err(RandomXError::CreationError("Could not allocate dataset".to_string()))
             }
@@ -328,7 +334,10 @@ impl RandomXDataset {
                 dataset_count: item_count,
                 cache: Mutex::new(cache),
             };
-            Ok((RandomXDataset { inner: Arc::new(inner) }, if win32_err != 0 { Some(win32_err) } else { None }))
+            Ok((
+                RandomXDataset { inner: Arc::new(inner) },
+                if win32_err != 0 { Some(win32_err) } else { None },
+            ))
         }
     }
 
@@ -625,11 +634,7 @@ impl RandomXVM {
             return Err(RandomXError::ParameterError("input was empty".to_string()));
         }
         unsafe {
-            randomx_calculate_hash_first(
-                self.vm,
-                input.as_ptr() as *const c_void,
-                input.len(),
-            );
+            randomx_calculate_hash_first(self.vm, input.as_ptr() as *const c_void, input.len());
         }
         Ok(())
     }
@@ -744,7 +749,11 @@ impl RandomXVM {
 
 #[cfg(test)]
 mod tests {
-    use std::{convert::TryFrom, ptr, sync::{Arc, Mutex}};
+    use std::{
+        convert::TryFrom,
+        ptr,
+        sync::{Arc, Mutex},
+    };
 
     use crate::{
         bindings::randomx_get_dataset_memory,
@@ -1118,12 +1127,10 @@ mod tests {
         ];
         // The only upstream known-answer vector for key "test key 001"
         // (listed for both fast and light mode in the RandomX test suite).
-        let reinit_vectors: &[(&[u8], &str)] = &[
-            (
-                b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua".as_slice(),
-                "e9ff4503201c0c2cca26d285c93ae883f9b1d30c9eb240b820756f2d5a7905fc",
-            ),
-        ];
+        let reinit_vectors: &[(&[u8], &str)] = &[(
+            b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua".as_slice(),
+            "e9ff4503201c0c2cca26d285c93ae883f9b1d30c9eb240b820756f2d5a7905fc",
+        )];
 
         let flags = RandomXFlag::get_recommended_flags() | RandomXFlag::FLAG_FULL_MEM;
 
