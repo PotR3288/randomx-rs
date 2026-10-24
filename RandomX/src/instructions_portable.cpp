@@ -60,14 +60,17 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 	#define HAVE_ROTL
 	#define HAVE_ROTR
 
-	#if EVAL_DEFINE(__MACHINEARM64_X64(1))
+	// clang-cl defines __SIZEOF_INT128__ above, so mulh/smulh already exist;
+	// and clang-cl's intrin.h lacks the __MACHINEX64* probe macros, which
+	// would explode EVAL_DEFINE's token-pasting. Skip under clang.
+	#if EVAL_DEFINE(__MACHINEARM64_X64(1)) && !defined(__clang__)
 		uint64_t mulh(uint64_t a, uint64_t b) {
 			return __umulh(a, b);
 		}
 		#define HAVE_MULH
 	#endif
 
-	#if EVAL_DEFINE(__MACHINEX64(1))
+	#if EVAL_DEFINE(__MACHINEX64(1)) && !defined(__clang__)
 		int64_t smulh(int64_t a, int64_t b) {
 			int64_t hi;
 			_mul128(a, b, &hi);
