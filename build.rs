@@ -20,7 +20,8 @@
 // WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 // USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use std::{env, fs, path::PathBuf};
+use std::env;
+use std::path::PathBuf;
 
 use cmake::Config;
 
@@ -28,7 +29,35 @@ use cmake::Config;
 fn main() {
     println!("cargo:rerun-if-env-changed=RANDOMX_MSVC_CXX");
     println!("cargo:rerun-if-env-changed=LLVM_INSTALL_DIR");
+    println!("cargo:rerun-if-env-changed=RANDOMX_ARCH");
     let randomx_dir = env::var("RANDOMX_DIR").unwrap_or_else(|_| "RandomX".to_string());
+
+    // Resolve the RandomX CMake ARCH setting. RandomX's CMakeLists reads
+    // ${ARCH} (NOT DARCH — a -DDARCH define is dead and silently ignored) and
+    // uses it as -march=${ARCH} for the whole C++ support layer on GNU/Clang
+    // toolchains; the MSVC branch never consults ARCH at all. Without this,
+    // mingw (windows-gnu) builds compile the support layer at baseline
+    // x86-64 — no BMI2/FMA/AVX2 — which costs real per-hash throughput.
+    //
+    // Default: "native" ONLY for windows-gnu builds (they are built per-box
+    // on the machine that mines, so a CPU-specific binary is fine). Linux
+    // keeps "default" — universal/glibc-pinned builds (cargo zigbuild) must
+    // stay portable across machines. RANDOMX_ARCH overrides both.
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "linux".to_string());
+    let arch = match env::var("RANDOMX_ARCH") {
+        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => {
+            if target_os == "windows" && target_env == "gnu" {
+                "native".to_string()
+            } else {
+                "default".to_string()
+            }
+        }
+    };
+    println!(
+        "cargo:warning=randomx-rs: ARCH={arch} (target {target_os}/{target_env}; set RANDOMX_ARCH to override)"
+    );
 
     // Resolve the MSVC-side C/C++ compiler. RANDOMX_MSVC_CXX is an explicit
     // override: a path to clang-cl.exe selects it; "0", "cl", "false" or empty
@@ -40,7 +69,11 @@ fn main() {
     let clang_cl = match env::var("RANDOMX_MSVC_CXX") {
         Ok(v) => {
             let v = v.trim().to_string();
-            if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("cl") || v.eq_ignore_ascii_case("false") {
+            if v.is_empty()
+                || v == "0"
+                || v.eq_ignore_ascii_case("cl")
+                || v.eq_ignore_ascii_case("false")
+            {
                 None
             } else {
                 Some(v)
@@ -73,7 +106,7 @@ fn main() {
             }
         }
         let mut config = Config::new(&randomx_dir);
-        config.define("DARCH", "native");
+        config.define("ARCH", &arch);
 
         // MSVC defaults the C++ support layer to baseline x86-64 (no AVX2/FMA),
         // which costs ~2x per-hash vs GCC's -maes/AVX2-class codegen on the same
@@ -119,24 +152,39 @@ fn main() {
         // rust-lld/collect2 -> undefined randomx_* against GCC LTO objects.
         // Measured hashrates (mingw ~6.72 KH/s, clang-cl 6.74 KH/s, Linux)
         // were all achieved without LTO/IPO; it buys nothing here.
-        let using_clang_cl = clang_cl.is_some() && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+        let using_clang_cl = clang_cl.is_some()
+            && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
 
-        if clang_cl.is_none() && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
-            println!(
-                "cargo:warning=randomx-rs: clang-cl not found; using cl.exe (measured ~60% slower RandomX codegen). \
-                 Install LLVM (winget install LLVM.LLVM), run cargo clean -p randomx-rs, and rebuild -- or set \
-                 RANDOMX_MSVC_CXX=<path to clang-cl.exe> to override."
-            );
+        if clang_cl.is_none()
+            && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+        {
+            println!("cargo:warning=randomx-rs: clang-cl not found; using cl.exe (measured ~60% slower RandomX codegen). Install LLVM (winget install LLVM.LLVM), run cargo clean -p randomx-rs, and rebuild -- or set RANDOMX_MSVC_CXX=<path to clang-cl.exe> to override.");
         }
 
         let path = config.build();
 
-        // ── Build-time LTO verification ────────────────────────────────
-        verify_lto(&path);
+        // Surface the compiler that actually configured the CMake build —
+        // an env-gated branch that "ran" but was defeated by a cached
+        // CMakeCache (or a generator that ignores -D compiler defines) is
+        // otherwise invisible: the build succeeds with the WRONG compiler.
+        // Read CMakeCache.txt instead of trusting the -D defines we passed.
+        let cache = std::path::Path::new(&path).join("CMakeCache.txt");
+        if let Ok(text) = std::fs::read_to_string(&cache) {
+            for key in ["CMAKE_CXX_COMPILER:FILEPATH", "CMAKE_C_COMPILER:FILEPATH"] {
+                for line in text.lines() {
+                    if line.starts_with(key) {
+                        println!("cargo:warning=randomx-rs: {}", line.trim());
+                        break;
+                    }
+                }
+            }
+        }
 
         path
     } else {
-        Config::new(&randomx_dir).define("DARCH", "native").build()
+        Config::new(&randomx_dir)
+            .define("ARCH", &arch)
+            .build()
     };
 
     println!("cargo:rustc-link-search=native={}/lib64", randomx_path.display());
@@ -159,88 +207,6 @@ fn main() {
     // RandomX's SeLockMemoryPrivilege calls. Use the target env vars instead.
     if target_os == "windows" {
         println!("cargo:rustc-link-lib=advapi32");
-    }
-}
-
-/// Verify that the compiled RandomX library appears to have LTO applied.
-/// We check two heuristics: (1) presence of LLVM/LTO symbols via llvm-nm, and
-/// (2) binary size — a non-LTO static library is typically >3× larger than an
-/// LTO'd one for RandomX (~40 MB vs ~12 MB). Logs warnings if either check fails.
-fn verify_lto(build_dir: &PathBuf) {
-    // Locate the compiled static library.
-    let lib_path = find_static_lib(build_dir);
-    let Some(lib_path) = lib_path else {
-        println!("cargo:warning=LTO verification skipped — could not locate RandomX static library");
-        return;
-    };
-
-    // Heuristic 1: binary size check.
-    let Ok(metadata) = fs::metadata(&lib_path) else {
-        println!(
-            "cargo:warning=LTO verification skipped — cannot stat {}",
-            lib_path.display()
-        );
-        return;
-    };
-    let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
-
-    // RandomX without LTO is typically ~35-45 MB; with thin LTO it's ~10-15 MB.
-    if size_mb > 25.0 {
-        println!(
-            "cargo:warning=LTO may not be active — static library is {:.1} MB (expected <15 MB with LTO). Check \
-             compiler flags and toolchain support.",
-            size_mb
-        );
-    } else {
-        println!(
-            "cargo:warning=LTO verified — static library size {:.1} MB (LTO appears active)",
-            size_mb
-        );
-    }
-
-    // Heuristic 2: try llvm-nm to look for LTO-related symbols.
-    if let Ok(output) = std::process::Command::new("llvm-nm").arg(&lib_path).output() {
-        if output.status.success() {
-            let nm_output = String::from_utf8_lossy(&output.stdout);
-            // LTO'd libraries often contain __llvm_profile_* or thinlto-related symbols.
-            let has_lto_markers = nm_output.contains("thinlto") || nm_output.contains("__llvm_profile");
-            if !has_lto_markers {
-                println!(
-                    "cargo:warning=LTO verification: llvm-nm found no LTO markers in library — LTO may not have been \
-                     applied. Size check was {:.1} MB.",
-                    size_mb
-                );
-            }
-        }
-    }
-    // If llvm-nm is not on PATH, silently skip this heuristic.
-}
-
-/// Walk the build directory tree to find the RandomX static library file.
-fn find_static_lib(build_dir: &PathBuf) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    collect_lib_files(build_dir, &mut candidates);
-    // Prefer lib64 over lib subdirectory if both exist.
-    candidates.sort_by_key(|p| {
-        let is_lib64 = p.parent().and_then(|p| p.file_name()) == Some(std::ffi::OsStr::new("lib64"));
-        !is_lib64 as u8 // false sorts before true, so lib64 comes first
-    });
-    candidates.into_iter().next()
-}
-
-fn collect_lib_files(dir: &PathBuf, out: &mut Vec<PathBuf>) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path.is_file() {
-                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if file_name.starts_with("librandomx") && (file_name.ends_with(".a") || file_name.ends_with(".o")) {
-                    out.push(path);
-                }
-            } else if path.is_dir() {
-                collect_lib_files(&path, out);
-            }
-        }
     }
 }
 
