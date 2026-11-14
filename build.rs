@@ -178,7 +178,9 @@ fn main() {
         ];
         if let Some(cache) = candidates.iter().find(|c| c.exists()) {
             if let Ok(text) = std::fs::read_to_string(cache) {
-                for key in ["CMAKE_CXX_COMPILER:FILEPATH", "CMAKE_C_COMPILER:FILEPATH"] {
+                // The cache entry's type suffix varies by generator (STRING
+                // vs FILEPATH) — match on the key name only.
+                for key in ["CMAKE_CXX_COMPILER:", "CMAKE_C_COMPILER:"] {
                     for line in text.lines() {
                         if line.starts_with(key) {
                             println!("cargo:warning=randomx-rs: {}", line.trim());
