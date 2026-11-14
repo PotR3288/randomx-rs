@@ -168,18 +168,22 @@ fn main() {
         // CMakeCache (or a generator that ignores -D compiler defines) is
         // otherwise invisible: the build succeeds with the WRONG compiler.
         // Read CMakeCache.txt instead of trusting the -D defines we passed.
-        // cmake-rs's build() returns the INSTALL dir; the CMake build tree
-        // (holding CMakeCache.txt) sits under <install>/out/build.
-        let cache = std::path::Path::new(&path)
-            .join("out")
-            .join("build")
-            .join("CMakeCache.txt");
-        if let Ok(text) = std::fs::read_to_string(&cache) {
-            for key in ["CMAKE_CXX_COMPILER:FILEPATH", "CMAKE_C_COMPILER:FILEPATH"] {
-                for line in text.lines() {
-                    if line.starts_with(key) {
-                        println!("cargo:warning=randomx-rs: {}", line.trim());
-                        break;
+        // cmake-rs's build() return value has moved the build tree around
+        // across versions (<return>/build today, <return>/out/build before) —
+        // probe the known layouts instead of hardcoding one.
+        let candidates = [
+            std::path::Path::new(&path).join("build").join("CMakeCache.txt"),
+            std::path::Path::new(&path).join("out").join("build").join("CMakeCache.txt"),
+            std::path::Path::new(&path).join("CMakeCache.txt"),
+        ];
+        if let Some(cache) = candidates.iter().find(|c| c.exists()) {
+            if let Ok(text) = std::fs::read_to_string(cache) {
+                for key in ["CMAKE_CXX_COMPILER:FILEPATH", "CMAKE_C_COMPILER:FILEPATH"] {
+                    for line in text.lines() {
+                        if line.starts_with(key) {
+                            println!("cargo:warning=randomx-rs: {}", line.trim());
+                            break;
+                        }
                     }
                 }
             }
