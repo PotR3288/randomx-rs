@@ -168,7 +168,12 @@ fn main() {
         // CMakeCache (or a generator that ignores -D compiler defines) is
         // otherwise invisible: the build succeeds with the WRONG compiler.
         // Read CMakeCache.txt instead of trusting the -D defines we passed.
-        let cache = std::path::Path::new(&path).join("CMakeCache.txt");
+        // cmake-rs's build() returns the INSTALL dir; the CMake build tree
+        // (holding CMakeCache.txt) sits under <install>/out/build.
+        let cache = std::path::Path::new(&path)
+            .join("out")
+            .join("build")
+            .join("CMakeCache.txt");
         if let Ok(text) = std::fs::read_to_string(&cache) {
             for key in ["CMAKE_CXX_COMPILER:FILEPATH", "CMAKE_C_COMPILER:FILEPATH"] {
                 for line in text.lines() {
