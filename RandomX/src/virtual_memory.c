@@ -247,8 +247,12 @@ void allocLargePagesMemoryEx(size_t bytes, void** mem_out, uint32_t* err_out) {
 #elif defined(__OpenBSD__) || defined(__NetBSD__)
 	mem = MAP_FAILED; // OpenBSD does not support huge pages
 #else
-	/* Prefer 1 GB huge pages for large allocations (dataset ~2 GiB): fewer
-	 * TLB entries and one shared mapping instead of ~1024 x 2 MiB pages.
+	/* Prefer 1 GB huge pages for LARGE allocations only (the dataset is
+	 * ~2 GiB → 3×1 GB pages vs ~1040×2 MiB TLB entries). The size gate
+	 * matters: this allocator also serves the 256 MB cache and the per-VM
+	 * 2 MB scratchpads — with MAP_HUGE_1GB those would each round UP to a
+	 * full 1 GB page (a 32-VM rig would waste ~30 GB on scratchpads).
+	 * Smaller allocations stay on the default (2 MiB) hugetlb pool.
 	 * Falls back to the default (2 MiB) huge page size when 1 GiB pages
 	 * are not reserved, so behavior is unchanged on stock systems.
 	 * MAP_HUGE_1GB requires Linux >= 3.8; some toolchains don't expose it
@@ -260,9 +264,17 @@ void allocLargePagesMemoryEx(size_t bytes, void** mem_out, uint32_t* err_out) {
 #define MAP_HUGE_1GB (30 << MAP_HUGE_SHIFT)
 #endif
 #if defined(__linux__)
-	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
-		MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | (MAP_HUGE_1GB) | MAP_POPULATE, -1, 0);
-	if (mem == MAP_FAILED)
+	if (bytes >= (1UL << 30)) {
+		mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | (MAP_HUGE_1GB) | MAP_POPULATE, -1, 0);
+		if (mem != MAP_FAILED) {
+			*mem_out = mem;
+			if (err_out) *err_out = 0;
+			return;
+		}
+		/* No 1 GiB pool (or it can't satisfy the mapping): fall through to
+		 * the 2 MiB hugetlb path below — behavior unchanged on stock hosts. */
+	}
 #endif
 	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0);
 #endif
@@ -304,9 +316,15 @@ void* allocLargePagesMemory(size_t bytes) {
 #define MAP_HUGE_1GB (30 << MAP_HUGE_SHIFT)
 #endif
 #if defined(__linux__)
-	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
-		MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | (MAP_HUGE_1GB) | MAP_POPULATE, -1, 0);
-	if (mem == MAP_FAILED)
+	if (bytes >= (1UL << 30)) {
+		mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | (MAP_HUGE_1GB) | MAP_POPULATE, -1, 0);
+		if (mem != MAP_FAILED) {
+			return mem;
+		}
+		/* No 1 GiB pool (or it can't satisfy the mapping): fall through to
+		 * the 2 MiB hugetlb path below — behavior unchanged on stock hosts. */
+	}
 #endif
 	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0);
 #endif
