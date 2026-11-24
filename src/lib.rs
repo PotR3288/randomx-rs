@@ -51,7 +51,7 @@ use bindings::{
     randomx_alloc_cache, randomx_alloc_dataset, randomx_cache, randomx_calculate_hash, randomx_create_vm,
     randomx_dataset, randomx_dataset_item_count, randomx_destroy_vm, randomx_get_dataset_memory, randomx_init_cache,
     randomx_init_dataset, randomx_release_cache, randomx_release_dataset, randomx_vm, randomx_vm_set_cache,
-    randomx_vm_set_dataset, RANDOMX_HASH_SIZE,
+    randomx_vm_set_dataset, RANDOMX_FLAG_V2, RANDOMX_HASH_SIZE,
 };
 use bitflags::bitflags;
 use libc::{c_ulong, c_void};
@@ -86,6 +86,8 @@ bitflags! {
         const FLAG_ARGON2_AVX2  = 0b0100_0000;
         /// Optimize Argon2 for CPUs without the AVX2 or SSSE3 instruction sets.
         const FLAG_ARGON2       = 0b0110_0000;
+        /// Enable the RandomX v2 algorithm.
+        const FLAG_V2           = RANDOMX_FLAG_V2;
     }
 }
 
@@ -1181,6 +1183,65 @@ mod tests {
             let vm = RandomXVM::new(flags, Some(cache), None).unwrap();
             let hash = vm.calculate_hash(input).unwrap();
             assert_eq!(hex::decode(expected).unwrap(), hash);
+        }
+    }
+
+    #[test]
+    fn test_vectors_light_mode_v2() {
+        let flags = RandomXFlag::get_recommended_flags() | RandomXFlag::FLAG_V2;
+        let vectors = [
+            (
+                b"test key 000".as_slice(),
+                b"This is a test".as_slice(),
+                "22ec6b861b3eb23686b2efbad69513c967ecfce80983df66c9c5b4fbfb4cdb6f",
+            ),
+            (
+                b"test key 000".as_slice(),
+                b"Lorem ipsum dolor sit amet".as_slice(),
+                "9e2c772c12fd48f93c14c97fdc89d556264d9100597023f44d9163e279012ecf",
+            ),
+            (
+                b"test key 001".as_slice(),
+                b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua".as_slice(),
+                "97024134686ce27d362ea8d86d8ef16483ac272abdabd46ef13359400777fe5e",
+            ),
+        ];
+
+        for (key, input, expected) in vectors {
+            let cache = RandomXCache::new(flags, key).unwrap();
+            let vm = RandomXVM::new(flags, Some(cache), None).unwrap();
+            assert_eq!(hex::decode(expected).unwrap(), vm.calculate_hash(input).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_vectors_fast_mode_v2() {
+        let flags =
+            RandomXFlag::get_recommended_flags() | RandomXFlag::FLAG_FULL_MEM | RandomXFlag::FLAG_V2;
+        let cache = RandomXCache::new(flags, b"test key 000").unwrap();
+        let dataset = RandomXDataset::new(flags, cache, 0).unwrap();
+        let vm = RandomXVM::new(flags, None, Some(dataset)).unwrap();
+
+        assert_eq!(
+            hex::decode("22ec6b861b3eb23686b2efbad69513c967ecfce80983df66c9c5b4fbfb4cdb6f").unwrap(),
+            vm.calculate_hash(b"This is a test").unwrap(),
+        );
+    }
+
+    #[test]
+    fn calculate_hash_set_v2_matches_single_hashes() {
+        let flags = RandomXFlag::get_recommended_flags() | RandomXFlag::FLAG_V2;
+        let inputs = [
+            b"This is a test".as_slice(),
+            b"Lorem ipsum dolor sit amet".as_slice(),
+            b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua".as_slice(),
+        ];
+        let cache = RandomXCache::new(flags, b"test key 000").unwrap();
+        let vm = RandomXVM::new(flags, Some(cache), None).unwrap();
+
+        let hashes = vm.calculate_hash_set(&inputs).unwrap();
+        for (input, batched) in inputs.iter().copied().zip(hashes) {
+            assert_eq!(batched, vm.calculate_hash(input).unwrap());
         }
     }
 }

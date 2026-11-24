@@ -4,6 +4,22 @@
 
 > Rust bindings to the RandomX proof-of-work (Pow) system
 
+## RandomX v2
+
+The vendored RandomX is v2.0.1. Legacy (v1) behavior remains the default; add
+`RandomXFlag::FLAG_V2` to the cache, dataset, and VM flags to opt into the v2
+algorithm.
+
+```rust
+use randomx_rs::{RandomXCache, RandomXFlag, RandomXVM};
+
+let flags = RandomXFlag::get_recommended_flags() | RandomXFlag::FLAG_V2;
+let cache = RandomXCache::new(flags, b"test key 000")?;
+let vm = RandomXVM::new(flags, Some(cache), None)?;
+let hash = vm.calculate_hash(b"This is a test")?;
+# Ok::<(), randomx_rs::RandomXError>(())
+```
+
 ## Build Dependencies
 
 The RandomX C/C++ sources are vendored directly in this repository (`RandomX/`), so there is no submodule to initialize — a plain `git clone` and `cargo build` work out of the box. (See [About this fork](#about-this-fork) for why.)

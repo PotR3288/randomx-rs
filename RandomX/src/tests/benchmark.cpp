@@ -97,6 +97,7 @@ void printUsage(const char* executable) {
 	std::cout << "  --auto        select the best options for the current CPU" << std::endl;
 	std::cout << "  --noBatch     calculate hashes one by one (default: batch)" << std::endl;
 	std::cout << "  --commit      calculate commitments instead of hashes (default: hashes)" << std::endl;
+	std::cout << "  --v2          calculate RandomX v2 hashes" << std::endl;
 }
 
 struct MemoryException : public std::exception {
@@ -150,7 +151,7 @@ void mine(randomx_vm* vm, std::atomic<uint32_t>& atomicNonce, AtomicHash& result
 }
 
 int main(int argc, char** argv) {
-	bool softAes, miningMode, verificationMode, help, largePages, jit, secure, commit;
+	bool softAes, miningMode, verificationMode, help, largePages, jit, secure, commit, v2;
 	bool ssse3, avx2, autoFlags, noBatch;
 	int noncesCount, threadCount, initThreadCount;
 	uint64_t threadAffinity;
@@ -177,10 +178,11 @@ int main(int argc, char** argv) {
 	readOption("--auto", argc, argv, autoFlags);
 	readOption("--noBatch", argc, argv, noBatch);
 	readOption("--commit", argc, argv, commit);
+	readOption("--v2", argc, argv, v2);
 
 	store32(&seed, seedValue);
 
-	std::cout << "RandomX benchmark v1.2.3" << std::endl;
+	std::cout << "RandomX benchmark v2.0.1" << std::endl;
 
 	if (help) {
 		printUsage(argv[0]);
@@ -235,6 +237,10 @@ int main(int argc, char** argv) {
 		flags |= RANDOMX_FLAG_SECURE;
 	}
 #endif
+
+	if (v2) {
+		flags |= RANDOMX_FLAG_V2;
+	}
 
 	if (flags & RANDOMX_FLAG_ARGON2_AVX2) {
 		std::cout << " - Argon2 implementation: AVX2" << std::endl;
@@ -394,8 +400,10 @@ int main(int argc, char** argv) {
 			randomx_release_cache(cache);
 		std::cout << "Calculated result: ";
 		result.print(std::cout);
-		if (noncesCount == 1000 && seedValue == 0 && !commit)
-			std::cout << "Reference result:  10b649a3f15c7c7f88277812f2e74b337a0f20ce909af09199cccb960771cfa1" << std::endl;
+		if (noncesCount == 1000 && seedValue == 0 && !commit) {
+			const char* r = v2 ? "b85d79e080b10b6ad28c2e6c993601a1361917dba979e03a0a8f7248aaf4ba52" : "10b649a3f15c7c7f88277812f2e74b337a0f20ce909af09199cccb960771cfa1";
+			std::cout << "Reference result:  " << r << std::endl;
+		}
 		if (!miningMode) {
 			std::cout << "Performance: " << 1000 * elapsed / noncesCount << " ms per hash" << std::endl;
 		}

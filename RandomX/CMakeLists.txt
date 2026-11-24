@@ -26,7 +26,7 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.5)
 
 project(RandomX)
 
@@ -176,11 +176,18 @@ endif()
 # RISC-V
 if(ARCH_ID STREQUAL "riscv64")
   list(APPEND randomx_sources
+    src/aes_hash_rv64_vector.cpp
+    src/aes_hash_rv64_zvkned.cpp
     src/jit_compiler_rv64_static.S
-    src/jit_compiler_rv64.cpp)
+    src/jit_compiler_rv64.cpp
+    src/jit_compiler_rv64_vector.cpp
+    src/jit_compiler_rv64_vector_static.S
+    src/cpu_rv64.S)
+
   # cheat because cmake and ccache hate each other
   set_property(SOURCE src/jit_compiler_rv64_static.S PROPERTY LANGUAGE C)
-  set_property(SOURCE src/jit_compiler_rv64_static.S PROPERTY XCODE_EXPLICIT_FILE_TYPE sourcecode.asm)
+  set_property(SOURCE src/jit_compiler_rv64_vector_static.S PROPERTY LANGUAGE C)
+  set_property(SOURCE src/cpu_rv64.S PROPERTY LANGUAGE C)
 
   # default build uses the RV64GC baseline
   set(RVARCH "rv64gc")
@@ -188,25 +195,130 @@ if(ARCH_ID STREQUAL "riscv64")
   # for native builds, enable Zba and Zbb if supported by the CPU
   if(ARCH STREQUAL "native")
     enable_language(ASM)
+
+    try_run(RANDOMX_VECTOR_RUN_FAIL
+        RANDOMX_VECTOR_COMPILE_OK
+        ${CMAKE_CURRENT_BINARY_DIR}/
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/riscv64_vector.s
+        COMPILE_DEFINITIONS "-march=rv64gcv")
+
+    if (RANDOMX_VECTOR_COMPILE_OK AND NOT RANDOMX_VECTOR_RUN_FAIL)
+        set(RVARCH_V ON)
+        message(STATUS "RISC-V vector extension detected")
+    else()
+        set(RVARCH_V OFF)
+    endif()
+
+    try_run(RANDOMX_ZICBOP_RUN_FAIL
+        RANDOMX_ZICBOP_COMPILE_OK
+        ${CMAKE_CURRENT_BINARY_DIR}/
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/riscv64_zicbop.s
+        COMPILE_DEFINITIONS "-march=rv64gc_zicbop")
+
+    if (RANDOMX_ZICBOP_COMPILE_OK AND NOT RANDOMX_ZICBOP_RUN_FAIL)
+        set(RVARCH_ZICBOP ON)
+        message(STATUS "RISC-V zicbop extension detected")
+    else()
+        set(RVARCH_ZICBOP OFF)
+    endif()
+
     try_run(RANDOMX_ZBA_RUN_FAIL
         RANDOMX_ZBA_COMPILE_OK
         ${CMAKE_CURRENT_BINARY_DIR}/
         ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/riscv64_zba.s
         COMPILE_DEFINITIONS "-march=rv64gc_zba")
+
     if (RANDOMX_ZBA_COMPILE_OK AND NOT RANDOMX_ZBA_RUN_FAIL)
-      set(RVARCH "${RVARCH}_zba")
+        set(RVARCH_ZBA ON)
+        message(STATUS "RISC-V zba extension detected")
+    else()
+        set(RVARCH_ZBA OFF)
     endif()
+
     try_run(RANDOMX_ZBB_RUN_FAIL
         RANDOMX_ZBB_COMPILE_OK
         ${CMAKE_CURRENT_BINARY_DIR}/
         ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/riscv64_zbb.s
         COMPILE_DEFINITIONS "-march=rv64gc_zbb")
+
     if (RANDOMX_ZBB_COMPILE_OK AND NOT RANDOMX_ZBB_RUN_FAIL)
-      set(RVARCH "${RVARCH}_zbb")
+        set(RVARCH_ZBB ON)
+        message(STATUS "RISC-V zbb extension detected")
+    else()
+        set(RVARCH_ZBB OFF)
+    endif()
+
+    try_run(RANDOMX_ZVKB_RUN_FAIL
+        RANDOMX_ZVKB_COMPILE_OK
+        ${CMAKE_CURRENT_BINARY_DIR}/
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/riscv64_zvkb.s
+        COMPILE_DEFINITIONS "-march=rv64gcv_zvkb")
+
+    if (RANDOMX_ZVKB_COMPILE_OK AND NOT RANDOMX_ZVKB_RUN_FAIL)
+        set(RVARCH_ZVKB ON)
+        message(STATUS "RISC-V zvkb extension detected")
+    else()
+        set(RVARCH_ZVKB OFF)
+    endif()
+
+    try_run(RANDOMX_ZVKNED_RUN_FAIL
+        RANDOMX_ZVKNED_COMPILE_OK
+        ${CMAKE_CURRENT_BINARY_DIR}/
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/riscv64_zvkned.s
+        COMPILE_DEFINITIONS "-march=rv64gcv_zvkned")
+
+    if (RANDOMX_ZVKNED_COMPILE_OK AND NOT RANDOMX_ZVKNED_RUN_FAIL)
+        set(RVARCH_ZVKNED ON)
+        message(STATUS "RISC-V zvkned extension detected")
+    else()
+        set(RVARCH_ZVKNED OFF)
+    endif()
+
+    # for native builds, enable Zba and Zbb if supported by the CPU
+    if (ARCH STREQUAL "native")
+        if (RVARCH_V)
+            set(RVARCH "${RVARCH}v")
+        endif()
+        if (RVARCH_ZICBOP)
+            set(RVARCH "${RVARCH}_zicbop")
+        endif()
+        if (RVARCH_ZBA)
+            set(RVARCH "${RVARCH}_zba")
+        endif()
+        if (RVARCH_ZBB)
+            set(RVARCH "${RVARCH}_zbb")
+        endif()
+        if (RVARCH_ZVKB)
+            set(RVARCH "${RVARCH}_zvkb")
+        endif()
+        if (RVARCH_ZVKNED)
+            set(RVARCH "${RVARCH}_zvkned")
+        endif()
     endif()
   endif()
 
   add_flag("-march=${RVARCH}")
+
+  set(RV64_VECTOR_FILE_ARCH "rv64gcv")
+
+  if (ARCH STREQUAL "native")
+    if (RVARCH_ZICBOP)
+      set(RV64_VECTOR_FILE_ARCH "${RV64_VECTOR_FILE_ARCH}_zicbop")
+    endif()
+    if (RVARCH_ZBA)
+      set(RV64_VECTOR_FILE_ARCH "${RV64_VECTOR_FILE_ARCH}_zba")
+    endif()
+    if (RVARCH_ZBB)
+      set(RV64_VECTOR_FILE_ARCH "${RV64_VECTOR_FILE_ARCH}_zbb")
+    endif()
+    if (RVARCH_ZVKB)
+      set(RV64_VECTOR_FILE_ARCH "${RV64_VECTOR_FILE_ARCH}_zvkb")
+    endif()
+  endif()
+
+  set_source_files_properties(src/jit_compiler_rv64_vector_static.S PROPERTIES COMPILE_FLAGS "-march=${RV64_VECTOR_FILE_ARCH}_zvkned")
+  set_source_files_properties(src/aes_hash_rv64_vector.cpp PROPERTIES COMPILE_FLAGS "-O3 -march=${RV64_VECTOR_FILE_ARCH}")
+  set_source_files_properties(src/aes_hash_rv64_zvkned.cpp PROPERTIES COMPILE_FLAGS "-O3 -march=${RV64_VECTOR_FILE_ARCH}_zvkned")
 endif()
 
 set(RANDOMX_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src" CACHE STRING "RandomX Include path")
@@ -268,5 +380,13 @@ if(NOT HAVE_CXX_ATOMICS)
   target_link_libraries(randomx-benchmark
     PRIVATE "atomic")
 endif()
+
+check_cxx_source_compiles("
+#include <stdlib.h>
+int main() {
+  void* p;
+  return posix_memalign(&p, 64, 64);
+}" HAVE_POSIX_MEMALIGN)
+
 set_property(TARGET randomx-benchmark PROPERTY POSITION_INDEPENDENT_CODE ON)
 set_property(TARGET randomx-benchmark PROPERTY CXX_STANDARD 11)
