@@ -55,9 +55,7 @@ fn main() {
             }
         }
     };
-    println!(
-        "cargo:warning=randomx-rs: ARCH={arch} (target {target_os}/{target_env}; set RANDOMX_ARCH to override)"
-    );
+    println!("cargo:warning=randomx-rs: ARCH={arch} (target {target_os}/{target_env}; set RANDOMX_ARCH to override)");
 
     // Resolve the MSVC-side C/C++ compiler. RANDOMX_MSVC_CXX is an explicit
     // override: a path to clang-cl.exe selects it; "0", "cl", "false" or empty
@@ -69,11 +67,7 @@ fn main() {
     let clang_cl = match env::var("RANDOMX_MSVC_CXX") {
         Ok(v) => {
             let v = v.trim().to_string();
-            if v.is_empty()
-                || v == "0"
-                || v.eq_ignore_ascii_case("cl")
-                || v.eq_ignore_ascii_case("false")
-            {
+            if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("cl") || v.eq_ignore_ascii_case("false") {
                 None
             } else {
                 Some(v)
@@ -152,12 +146,9 @@ fn main() {
         // rust-lld/collect2 -> undefined randomx_* against GCC LTO objects.
         // Measured hashrates (mingw ~6.72 KH/s, clang-cl 6.74 KH/s, Linux)
         // were all achieved without LTO/IPO; it buys nothing here.
-        let using_clang_cl = clang_cl.is_some()
-            && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+        let using_clang_cl = clang_cl.is_some() && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
 
-        if clang_cl.is_none()
-            && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
-        {
+        if clang_cl.is_none() && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
             println!("cargo:warning=randomx-rs: clang-cl not found; using cl.exe (measured ~60% slower RandomX codegen). Install LLVM (winget install LLVM.LLVM), run cargo clean -p randomx-rs, and rebuild -- or set RANDOMX_MSVC_CXX=<path to clang-cl.exe> to override.");
         }
 
@@ -173,7 +164,10 @@ fn main() {
         // probe the known layouts instead of hardcoding one.
         let candidates = [
             std::path::Path::new(&path).join("build").join("CMakeCache.txt"),
-            std::path::Path::new(&path).join("out").join("build").join("CMakeCache.txt"),
+            std::path::Path::new(&path)
+                .join("out")
+                .join("build")
+                .join("CMakeCache.txt"),
             std::path::Path::new(&path).join("CMakeCache.txt"),
         ];
         if let Some(cache) = candidates.iter().find(|c| c.exists()) {
@@ -193,9 +187,7 @@ fn main() {
 
         path
     } else {
-        Config::new(&randomx_dir)
-            .define("ARCH", &arch)
-            .build()
+        Config::new(&randomx_dir).define("ARCH", &arch).build()
     };
 
     println!("cargo:rustc-link-search=native={}/lib64", randomx_path.display());

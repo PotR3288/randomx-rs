@@ -1216,8 +1216,7 @@ mod tests {
 
     #[test]
     fn test_vectors_fast_mode_v2() {
-        let flags =
-            RandomXFlag::get_recommended_flags() | RandomXFlag::FLAG_FULL_MEM | RandomXFlag::FLAG_V2;
+        let flags = RandomXFlag::get_recommended_flags() | RandomXFlag::FLAG_FULL_MEM | RandomXFlag::FLAG_V2;
         let cache = RandomXCache::new(flags, b"test key 000").unwrap();
         let dataset = RandomXDataset::new(flags, cache, 0).unwrap();
         let vm = RandomXVM::new(flags, None, Some(dataset)).unwrap();
