@@ -319,7 +319,10 @@ To access a particular scratchpad level, bitwise AND with a mask according to ta
 
 The VM has 8 integer registers `r0`-`r7` (group R) and a total of 12 floating point registers split into 3 groups: `f0`-`f3` (group F), `e0`-`e3` (group E) and `a0`-`a3` (group A). Integer registers are 64 bits wide, while floating point registers are 128 bits wide and contain a pair of numbers in floating point format. The lower and upper half of floating point registers are not separately addressable.
 
-Additionally, there are 3 internal registers `ma`, `mx` and `fprc`.
+Additionally, there are 4 internal registers `ma`, `mx`, `mt` and `fprc`.
+
+- RandomX v1: `mp` is a name alias for `mx`
+- RandomX v2: `mp` is a name alias for `ma`
 
 Integer registers `r0`-`r7` can be the source or the destination operands of integer instructions or may be used as address registers for accessing the Scratchpad.
 
@@ -447,12 +450,14 @@ The loop described below is repeated until the value of the `ic` register reache
 2. `spAddr0` is used to perform a 64-byte aligned read from Scratchpad level 3 (using mask from Table 4.2.1). The 64 bytes are XORed with all integer registers in order `r0`-`r7`.
 3. `spAddr1` is used to perform a 64-byte aligned read from Scratchpad level 3 (using mask from Table 4.2.1). Each floating point register `f0`-`f3` and `e0`-`e3` is initialized using an 8-byte value according to the conversion rules from chapters 4.3.1 and 4.3.2.
 4. The 256 instructions stored in the Program Buffer are executed.
-5. The `mx` register is XORed with the low 32 bits of registers `readReg2` and `readReg3` (see Table 4.5.3).
-6. A 64-byte Dataset item at address `datasetOffset + mx % RANDOMX_DATASET_BASE_SIZE` is prefetched from the Dataset (it will be used during the next iteration).
-7. A 64-byte Dataset item at address `datasetOffset + ma % RANDOMX_DATASET_BASE_SIZE` is loaded from the Dataset. The 64 bytes are XORed with all integer registers in order `r0`-`r7`.
+5. The value of `ma` is saved in `mt`. Then the `mp` register is XORed with the low 32 bits of registers `readReg2` and `readReg3` (see Table 4.5.3).
+6. A 64-byte Dataset item at address `datasetOffset + mp % RANDOMX_DATASET_BASE_SIZE` is prefetched from the Dataset (it will be used during the next iteration(s)).
+7. A 64-byte Dataset item at address `datasetOffset + mt % RANDOMX_DATASET_BASE_SIZE` is loaded from the Dataset. The 64 bytes are XORed with all integer registers in order `r0`-`r7`.
 8. The values of registers `mx` and `ma` are swapped.
 9. The values of all integer registers `r0`-`r7` are written to the Scratchpad (L3) at address `spAddr1` (64-byte aligned).
-10. Register `f0` is XORed with register `e0` and the result is stored in register `f0`. Register `f1` is XORed with register `e1` and the result is stored in register `f1`. Register `f2` is XORed with register `e2` and the result is stored in register `f2`. Register `f3` is XORed with register `e3` and the result is stored in register `f3`.
+10. Group F registers are mixed with group E registers.
+- **RandomX v1:** `fi = fi XOR ei` for i = 0,1,2,3
+- **RandomX v2:** `f0 = AES encrypt of f0 with e0 as key`,`f1 = AES decrypt of f1 with e0 as key`,`f2 = AES encrypt of f2 with e0 as key`,`f3 = AES decrypt of f3 with e0 as key`. These steps are repeated with `e1`,`e2`,`e3` as keys.
 11. The values of registers `f0`-`f3` are written to the Scratchpad (L3) at address `spAddr0` (64-byte aligned).
 12. `spAddr0` and `spAddr1` are both set to zero.
 13. `ic` is decreased by 1.
@@ -667,7 +672,12 @@ There are 2 control instructions.
 |25/256|CBRANCH|R|-|`dst = dst + cimm`, conditional jump
 
 #### 5.4.1 CFROUND
-This instruction calculates a 2-bit value by rotating the source register right by `imm32` bits and taking the 2 least significant bits (the value of the source register is unaffected). The result is stored in the `fprc` register. This changes the rounding mode of all subsequent floating point instructions.
+This instruction calculates a 2-bit value by rotating the source register right by `imm32` bits and taking the 2 least significant bits (the value of the source register is unaffected).
+
+- **RandomX v1**: bits 0-1 of the result are stored in the `fprc` register.
+- **RandomX v2**: if bits 2-5 of the result are 0, bits 0-1 of the result are stored in the `fprc` register
+
+This sets the rounding mode of all subsequent floating point instructions.
 
 #### 5.4.2 CBRANCH
 
@@ -882,7 +892,7 @@ The Dataset is a read-only memory structure that is used during program executio
 
 In order to allow PoW verification with a lower amount of memory, the Dataset is constructed in two steps using an intermediate structure called the "Cache", which can be used to calculate Dataset items on the fly.
 
-The whole Dataset is constructed from the key value `K`, which is an input parameter of RandomX. The whole Dataset needs to be recalculated everytime the key value changes. Fig. 7.1 shows the process of Dataset construction. Note: the maximum supported length of `K` is 60 bytes. Using a longer key results in implementation-defined behavior.
+The whole Dataset is constructed from the key value `K`, which is an input parameter of RandomX. The whole Dataset needs to be recalculated every time the key value changes. Fig. 7.1 shows the process of Dataset construction. Note: the maximum supported length of `K` is 60 bytes. Using a longer key results in implementation-defined behavior.
 
 *Figure 7.1 - Dataset construction*
 
